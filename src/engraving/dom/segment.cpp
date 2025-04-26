@@ -1095,6 +1095,33 @@ void Segment::setXPosInSystemCoords(double x)
     mutldata()->setPosX(x - measure()->x());
 }
 
+bool Segment::isTupletSubdivision() const
+{
+    int denom = tick().reduced().denominator();
+    bool denomIsPowOfTwo = (denom & (denom - 1)) == 0;
+    // A non-power-of-two denominator is possible only with tuplets
+    return !denomIsPowOfTwo;
+}
+
+bool Segment::isInsideTupletOnStaff(staff_idx_t staffIdx) const
+{
+    const Segment* refCRSeg = isChordRestType() && hasElements(staffIdx) ? this : prev1WithElemsOnStaff(staffIdx, SegmentType::ChordRest);
+    if (!refCRSeg || refCRSeg->measure() != measure()) {
+        return false;
+    }
+
+    track_idx_t startTrack = staff2track(staffIdx);
+    track_idx_t endTrack = startTrack + VOICES;
+    for (track_idx_t track = startTrack; track < endTrack; ++track) {
+        ChordRest* chordRest = toChordRest(refCRSeg->elementAt(track));
+        if (chordRest && chordRest->tuplet() && tick() != chordRest->topTuplet()->tick()) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 //---------------------------------------------------------
 //   swapElements
 //---------------------------------------------------------
@@ -1699,6 +1726,10 @@ EngravingItem* Segment::firstInNextSegments(staff_idx_t activeStaff) const
 
 EngravingItem* Segment::firstElementOfSegment(staff_idx_t activeStaff) const
 {
+    if (isTimeTickType()) {
+        return nullptr;
+    }
+
     for (auto i: m_elist) {
         if (i && i->staffIdx() == activeStaff) {
             if (i->isDurationElement()) {
@@ -1853,6 +1884,10 @@ EngravingItem* Segment::prevElementOfSegment(EngravingItem* e, staff_idx_t activ
 
 EngravingItem* Segment::lastElementOfSegment(staff_idx_t activeStaff) const
 {
+    if (isTimeTickType()) {
+        return nullptr;
+    }
+
     const std::vector<EngravingItem*>& elements = m_elist;
     for (auto it = elements.rbegin(); it != elements.rend(); ++it) {
         EngravingItem* item = *it;
@@ -2172,6 +2207,10 @@ EngravingItem* Segment::prevElement(staff_idx_t activeStaff)
             if (lastEl) {
                 return lastEl;
             }
+        }
+        if (isTimeTickType()) {
+            Segment* prevSeg = prev1MMenabled();
+            return prevSeg ? prevSeg->lastElementOfSegment(activeStaff) : nullptr;
         }
         track_idx_t track = score()->nstaves() * VOICES - 1;
         Segment* s = this;
@@ -2547,13 +2586,16 @@ void Segment::createShape(staff_idx_t staffIdx)
             continue;
         }
 
-        if (e->isHarmony()) {
-            // use same spacing calculation as for chordrest
-            renderer()->layoutItem(toHarmony(e));
-
-            double x1 = e->ldata()->bbox().x() + e->pos().x();
-            double x2 = e->ldata()->bbox().x() + e->ldata()->bbox().width() + e->pos().x();
-            s.addHorizontalSpacing(e, x1, x2);
+        if (e->isHarmony() || e->isFretDiagram()) {
+            // TODO: eliminate once and for all this addHorizontalSpace hack [M.S.]
+            RectF bbox = e->ldata()->bbox().translated(e->pos());
+            s.addHorizontalSpacing(e, bbox.left(), bbox.right());
+            if (e->isFretDiagram()) {
+                if (Harmony* harmony = toFretDiagram(e)->harmony()) {
+                    RectF harmBbox = harmony->ldata()->bbox().translated(harmony->pos() + e->pos());
+                    s.addHorizontalSpacing(harmony, harmBbox.left(), harmBbox.right());
+                }
+            }
         } else if (!e->isRehearsalMark()
                    && !e->isFretDiagram()
                    && !e->isHarmony()
@@ -2846,14 +2888,14 @@ bool Segment::goesBefore(const Segment* nextSegment) const
         return clefPos == ClefToBarlinePosition::AFTER;
     }
 
-    if (thisIsClef && (nextIsKeySig || nextIsTimeSig)
-        && rtick() == Fraction(0, 1) && nextSegment->rtick() == Fraction(0, 1) && !nextIsHeader) {
+    if (thisIsClef && (nextIsKeySig || nextIsTimeSig) && rtick() == Fraction(0, 1) && nextSegment->rtick() == Fraction(0, 1)
+        && !nextIsHeader && thisMeasureIsStartRepeat && prevMeasureIsEndRepeat) {
         // Between repeats
         return true;
     }
 
-    if ((thisIsKeySig || thisIsTimeSig) && nextIsClef
-        && rtick() == Fraction(0, 1) && nextSegment->rtick() == Fraction(0, 1) && !thisIsHeader) {
+    if ((thisIsKeySig || thisIsTimeSig) && nextIsClef && rtick() == Fraction(0, 1) && nextSegment->rtick() == Fraction(0, 1)
+        && !thisIsHeader && thisMeasureIsStartRepeat && prevMeasureIsEndRepeat) {
         // Between repeats
         return false;
     }

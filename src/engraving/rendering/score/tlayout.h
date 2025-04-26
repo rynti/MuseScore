@@ -278,6 +278,7 @@ public:
     static void layoutMeasureNumber(const MeasureNumber* item, MeasureNumber::LayoutData* ldata, const LayoutContext& ctx);
     static void layoutMeasureNumberBase(const MeasureNumberBase* item, MeasureNumberBase::LayoutData* ldata, const LayoutContext& ctx); // base class
     static void layoutMeasureRepeat(const MeasureRepeat* item, MeasureRepeat::LayoutData* ldata, const LayoutContext& ctx);
+    static void layoutMeasureRepeatExtender(const MeasureRepeat* item, MeasureRepeat::LayoutData* ldata, const LayoutContext& ctx);
     static void layoutMMRest(const MMRest* item, MMRest::LayoutData* ldata, const LayoutContext& ctx);
     static void layoutMMRestRange(const MMRestRange* item, MMRestRange::LayoutData* ldata, const LayoutContext& ctx);
 
@@ -389,6 +390,8 @@ private:
     static void layoutDynamicToEndOfPrevious(const Dynamic* item, Dynamic::LayoutData* ldata, const LayoutConfiguration& conf);
 
     static void manageHairpinSnapping(HairpinSegment* item, LayoutContext& ctx);
+
+    static void checkRehearsalMarkVSBigTimeSig(const RehearsalMark* item, RehearsalMark::LayoutData* ldata);
 };
 }
 

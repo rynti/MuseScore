@@ -1298,10 +1298,13 @@ void ChordRest::checkStaffMoveValidity()
 bool ChordRest::hasFollowingJumpItem() const
 {
     const Segment* seg = segment();
-    const Measure* measure = seg->measure();
+    const Measure* measure = seg ? seg->measure() : nullptr;
+    if (!measure) {
+        return false;
+    }
     const Fraction nextTick = seg->tick() + actualTicks();
 
-    if (measure->lastChordRest(track()) != this) {
+    if (endTick() != measure->endTick()) {
         return false;
     }
 
@@ -1317,7 +1320,7 @@ bool ChordRest::hasFollowingJumpItem() const
 
         const Marker* marker = toMarker(e);
 
-        if (muse::contains(Marker::RIGHT_MARKERS, marker->markerType())) {
+        if (marker->isRightMarker()) {
             return true;
         }
     }
@@ -1358,7 +1361,7 @@ bool ChordRest::hasPrecedingJumpItem() const
     const Segment* seg = segment();
     const Measure* measure = seg->measure();
 
-    if (measure->firstChordRest(track()) != this) {
+    if (tick() != measure->tick()) {
         return false;
     }
 
@@ -1373,7 +1376,7 @@ bool ChordRest::hasPrecedingJumpItem() const
         }
 
         const Marker* marker = toMarker(e);
-        if (muse::contains(Marker::RIGHT_MARKERS, marker->markerType())) {
+        if (marker->isRightMarker()) {
             continue;
         }
 

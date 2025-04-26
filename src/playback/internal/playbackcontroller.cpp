@@ -107,6 +107,7 @@ void PlaybackController::init()
     dispatcher()->reg(this, COUNT_IN_CODE, this, &PlaybackController::toggleCountIn);
     dispatcher()->reg(this, PLAYBACK_SETUP, this, &PlaybackController::openPlaybackSetupDialog);
     dispatcher()->reg(this, TOGGLE_HEAR_PLAYBACK_WHEN_EDITING_CODE, this, &PlaybackController::toggleHearPlaybackWhenEditing);
+    dispatcher()->reg(this, "playback-reload-cache", this, &PlaybackController::reloadPlaybackCache);
 
     globalContext()->currentNotationChanged().onNotify(this, [this]() {
         onNotationChanged();
@@ -132,6 +133,10 @@ void PlaybackController::init()
         updateCurrentTempo();
 
         updateLoop();
+    });
+
+    notationConfiguration()->isMidiInputEnabledChanged().onNotify(this, [this]() {
+        notifyActionCheckedChanged(MIDI_ON_CODE);
     });
 
     configuration()->playNotesWhenEditingChanged().onNotify(this, [this]() {
@@ -349,13 +354,13 @@ void PlaybackController::setTrackSoloMuteState(const InstrumentTrackId& trackId,
     m_notation->soloMuteState()->setTrackSoloMuteState(trackId, state);
 }
 
-void PlaybackController::playElements(const std::vector<const notation::EngravingItem*>& elements)
+void PlaybackController::playElements(const std::vector<const notation::EngravingItem*>& elements, bool isMidi)
 {
     IF_ASSERT_FAILED(notationPlayback()) {
         return;
     }
 
-    if (!configuration()->playNotesWhenEditing()) {
+    if ((!configuration()->playNotesWhenEditing()) || (isMidi && !configuration()->playNotesOnMidiInput())) {
         return;
     }
 
@@ -608,7 +613,11 @@ void PlaybackController::onPartChanged(const Part* part)
 
 void PlaybackController::onSelectionChanged()
 {
-    INotationSelectionPtr selection = this->selection();
+    const INotationSelectionPtr selection = this->selection();
+    if (!selection || !m_player) {
+        return;
+    }
+
     bool selectionTypeChanged = m_isRangeSelection && !selection->isRange();
     m_isRangeSelection = selection->isRange();
 
@@ -627,7 +636,7 @@ void PlaybackController::onSelectionChanged()
         return;
     }
 
-    currentPlayer()->resetLoop();
+    m_player->resetLoop();
 
     seekRangeSelection();
     updateSoloMuteStates();
@@ -800,9 +809,8 @@ void PlaybackController::toggleMetronome()
 
 void PlaybackController::toggleMidiInput()
 {
-    bool midiInputEnabled = notationConfiguration()->isMidiInputEnabled();
-    notationConfiguration()->setIsMidiInputEnabled(!midiInputEnabled);
-    notifyActionCheckedChanged(MIDI_ON_CODE);
+    bool wasMidiInputEnabled = notationConfiguration()->isMidiInputEnabled();
+    notationConfiguration()->setIsMidiInputEnabled(!wasMidiInputEnabled);
 }
 
 void PlaybackController::setMidiUseWrittenPitch(bool useWrittenPitch)
@@ -855,6 +863,14 @@ void PlaybackController::toggleHearPlaybackWhenEditing()
 {
     bool wasPlayNotesWhenEditing = configuration()->playNotesWhenEditing();
     configuration()->setPlayNotesWhenEditing(!wasPlayNotesWhenEditing);
+}
+
+void PlaybackController::reloadPlaybackCache()
+{
+    INotationPlaybackPtr nPlayback = notationPlayback();
+    if (nPlayback) {
+        nPlayback->reload();
+    }
 }
 
 void PlaybackController::openPlaybackSetupDialog()

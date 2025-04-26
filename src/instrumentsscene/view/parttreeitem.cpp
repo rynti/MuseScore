@@ -42,23 +42,23 @@ void PartTreeItem::init(const notation::Part* masterPart)
     }
 
     const Part* part = notation()->parts()->part(masterPart->id());
-    bool partExists = part != nullptr;
-    bool visible = partExists && part->show();
+    m_partExists = part != nullptr;
+    bool visible = m_partExists && part->show();
 
-    if (!partExists) {
+    if (!m_partExists) {
         part = masterPart;
     }
 
     setId(part->id());
     setTitle(part->instrument()->nameAsPlainText());
     setIsVisible(visible);
-    setSettingsAvailable(partExists);
-    setSettingsEnabled(partExists);
-    setIsExpandable(partExists);
-    setIsRemovable(partExists);
+    setSettingsAvailable(m_partExists);
+    setSettingsEnabled(m_partExists);
+    setIsExpandable(m_partExists);
+    setIsRemovable(m_partExists);
 
     m_part = part;
-    m_isInited = true;
+    m_ignoreVisibilityChange = false;
 }
 
 const Part* PartTreeItem::part() const
@@ -66,10 +66,23 @@ const Part* PartTreeItem::part() const
     return m_part;
 }
 
+void PartTreeItem::onScoreChanged(const mu::engraving::ScoreChangesRange&)
+{
+    if (!m_part) {
+        return;
+    }
+
+    setTitle(m_part->instrument()->nameAsPlainText());
+
+    m_ignoreVisibilityChange = true;
+    setIsVisible(m_partExists && m_part->show());
+    m_ignoreVisibilityChange = false;
+}
+
 void PartTreeItem::listenVisibilityChanged()
 {
     connect(this, &AbstractLayoutPanelTreeItem::isVisibleChanged, this, [this](bool isVisible) {
-        if (!m_isInited) {
+        if (m_ignoreVisibilityChange) {
             return;
         }
 
@@ -189,11 +202,13 @@ void PartTreeItem::removeChildren(int row, int count, bool deleteChild)
         stavesIds.push_back(childAtRow(i)->id());
     }
 
+    // Remove the children first, then remove the staves
+    // so we don't try to remove them twice when notified by removeStaves()
+    AbstractLayoutPanelTreeItem::removeChildren(row, count, deleteChild);
+
     if (deleteChild) {
         masterNotation()->parts()->removeStaves(stavesIds);
     }
-
-    AbstractLayoutPanelTreeItem::removeChildren(row, count, deleteChild);
 }
 
 bool PartTreeItem::canAcceptDrop(const QVariant& obj) const

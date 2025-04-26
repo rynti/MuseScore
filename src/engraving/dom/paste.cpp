@@ -379,6 +379,13 @@ static EngravingItem* pasteSystemObject(EditData& srcData, EngravingItem* target
         return nullptr;
     }
 
+    // System objects can only be pasted on the *top* staff of an instrument
+    Part* targetPart = targetStaff->part();
+    targetStaff = targetPart ? targetPart->staves().front() : nullptr;
+    if (!targetStaff) {
+        return nullptr;
+    }
+
     if (targetStaff == targetScore->staff(0) || targetScore->isSystemObjectStaff(targetStaff)) {
         return target->drop(srcData);
     }
@@ -499,9 +506,6 @@ std::vector<EngravingItem*> Score::cmdPaste(const IMimeData* ms, MuseScoreView* 
                     }
                 }
             }
-        }
-        if (!droppedElements.empty()) {
-            select(droppedElements.back());
         }
     } else if (ms->hasFormat(mimeStaffListFormat)) {
         ChordRest* cr = 0;

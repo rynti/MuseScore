@@ -840,7 +840,7 @@ void Measure::add(EngravingItem* e)
     break;
     case ElementType::JUMP:
     case ElementType::MARKER:
-        if (e && (e->isJump() || muse::contains(Marker::RIGHT_MARKERS, toMarker(e)->markerType()))) {
+        if (e && (e->isJump() || (e->isMarker() && toMarker(e)->isRightMarker()))) {
             // "To coda" markings act like jumps
             setProperty(Pid::REPEAT_JUMP, true);
         }
@@ -943,9 +943,10 @@ void Measure::remove(EngravingItem* e)
         break;
 
     case ElementType::JUMP:
-        setProperty(Pid::REPEAT_JUMP, false);
-    // fall through
     case ElementType::MARKER:
+        if (e->isJump() || (e->isMarker() && toMarker(e)->isRightMarker())) {
+            setProperty(Pid::REPEAT_JUMP, false);
+        }
     case ElementType::HBOX:
         if (!el().remove(e)) {
             LOGD("Measure(%p)::remove(%s,%p) not found", this, e->typeName(), e);
@@ -2425,6 +2426,9 @@ bool Measure::isCutawayClef(staff_idx_t staffIdx) const
             break;
         }
     }
+    while (s && s->isTimeTickType()) {
+        s = s->prev();
+    }
     if (!s) {
         return false;
     }
@@ -2907,7 +2911,7 @@ Measure* Measure::mmRestLast() const
 //    otherwise, return the measure itself.
 //---------------------------------------------------------
 
-const Measure* Measure::coveringMMRestOrThis() const
+Measure* Measure::coveringMMRestOrThis()
 {
     if (!style().styleB(Sid::createMultiMeasureRests)) {
         return this;
@@ -2931,6 +2935,11 @@ const Measure* Measure::coveringMMRestOrThis() const
     }
 
     return 0;
+}
+
+const Measure* Measure::coveringMMRestOrThis() const
+{
+    return const_cast<Measure*>(this)->coveringMMRestOrThis();
 }
 
 int Measure::measureRepeatCount(staff_idx_t staffIdx) const

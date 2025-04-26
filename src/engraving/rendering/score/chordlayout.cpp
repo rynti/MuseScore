@@ -389,7 +389,7 @@ void ChordLayout::layoutTablature(Chord* item, LayoutContext& ctx)
             double overlap = 0.0;                // how much tie can overlap start and end notes
             bool shortStart = false;            // whether tie should clear start note or not
             Note* startNote = tie->startNote();
-            Chord* startChord = startNote->chord();
+            Chord* startChord = startNote ? startNote->chord() : nullptr;
             if (startChord && startChord->measure() == item->measure() && startChord == prevChordRest(item)) {
                 double startNoteWidth = startNote->width();
                 // overlap into start chord?
@@ -1275,10 +1275,8 @@ bool ChordLayout::isChordPosBelowBeam(Chord* item, Beam* beam)
     Note* baseNote = item->up() ? item->downNote() : item->upNote();
     double noteY = baseNote->pagePos().y();
 
-    ChordRest* startCR = beam->elements().front();
-    ChordRest* endCR = beam->elements().back();
-    PointF startAnchor = BeamLayout::chordBeamAnchor(beam, startCR, ChordBeamAnchorType::Start);
-    PointF endAnchor = BeamLayout::chordBeamAnchor(beam, endCR, ChordBeamAnchorType::End);
+    PointF startAnchor = beam->startAnchor();
+    PointF endAnchor = beam->endAnchor();
 
     if (item == beam->elements().front()) {
         return noteY > startAnchor.y();
@@ -2079,11 +2077,13 @@ void ChordLayout::layoutChords1(LayoutContext& ctx, Segment* segment, staff_idx_
         layoutChords3(chords, notes, staff, ctx);
     }
 
-    layoutLedgerLines(chords);
-    AccidentalsLayout::layoutAccidentals(chords, ctx);
-    for (Chord* chord : chords) {
-        for (Chord* grace : chord->graceNotes()) {
-            AccidentalsLayout::layoutAccidentals({ grace }, ctx);
+    if (!isTab) {
+        layoutLedgerLines(chords);
+        AccidentalsLayout::layoutAccidentals(chords, ctx);
+        for (Chord* chord : chords) {
+            for (Chord* grace : chord->graceNotes()) {
+                AccidentalsLayout::layoutAccidentals({ grace }, ctx);
+            }
         }
     }
 
@@ -3508,7 +3508,7 @@ void ChordLayout::fillShape(const MMRest* item, MMRest::LayoutData* ldata, const
 
     double vStrokeHeight = conf.styleMM(Sid::mmRestHBarVStrokeHeight);
     shape.add(RectF(0.0, -(vStrokeHeight * .5), ldata->restWidth, vStrokeHeight), item);
-    if (item->numberVisible()) {
+    if (item->shouldShowNumber()) {
         shape.add(item->numberRect().translated(item->numberPos()), item);
     }
 

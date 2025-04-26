@@ -899,6 +899,10 @@
     <seq>P</seq>
     </SC>
   <SC>
+    <key>toggle-percussion-panel</key>
+    <seq>O</seq>
+    </SC>
+  <SC>
     <key>next-score</key>
     <std>20</std>
     </SC>
@@ -957,6 +961,7 @@
   <SC>
     <key>next-syllable</key>
     <seq>-</seq>
+    <seq>Num+-</seq>
   </SC>
   <SC>
     <key>add-melisma</key>

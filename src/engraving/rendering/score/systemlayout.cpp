@@ -227,12 +227,13 @@ System* SystemLayout::collectSystem(LayoutContext& ctx)
         }
 
         const MeasureBase* mb = ctx.state().curMeasure();
+        const MeasureBase* next = mb->nextMM();
         bool lineBreak  = false;
         switch (ctx.conf().viewMode()) {
         case LayoutMode::PAGE:
         case LayoutMode::SYSTEM:
             lineBreak = mb->pageBreak() || mb->lineBreak() || mb->sectionBreak() || mb->isEndOfSystemLock()
-                        || (ctx.state().nextMeasure() && ctx.state().nextMeasure()->isStartOfSystemLock());
+                        || (next && next->isStartOfSystemLock());
             break;
         case LayoutMode::FLOAT:
         case LayoutMode::LINE:
@@ -651,11 +652,13 @@ void SystemLayout::updateBigTimeSigIfNeeded(System* system, LayoutContext& ctx)
             }
 
             Segment* prevBarlineSeg = nullptr;
+            Segment* prevRepeatAnnounceTimeSigSeg = nullptr;
             if (centerOnBarline) {
                 for (Segment* prevSeg = seg.prev1(); prevSeg && prevSeg->tick() == seg.tick(); prevSeg = prevSeg->prev1()) {
                     if (prevSeg->isEndBarLineType()) {
                         prevBarlineSeg = prevSeg;
-                        break;
+                    } else if (prevSeg->isTimeSigRepeatAnnounceType()) {
+                        prevRepeatAnnounceTimeSigSeg = prevSeg;
                     }
                 }
             }
@@ -673,7 +676,9 @@ void SystemLayout::updateBigTimeSigIfNeeded(System* system, LayoutContext& ctx)
                     }
                     continue;
                 }
-                if (prevBarlineSeg && prevBarlineSeg->system() == system) {
+
+                if (prevBarlineSeg && prevBarlineSeg->system() == system && !prevRepeatAnnounceTimeSigSeg) {
+                    // Center timeSig on its segment
                     RectF bbox = timeSig->ldata()->bbox();
                     double newXPos = -0.5 * (bbox.right() + bbox.left());
                     double xPosDiff = timeSig->pos().x() - newXPos;
@@ -681,6 +686,33 @@ void SystemLayout::updateBigTimeSigIfNeeded(System* system, LayoutContext& ctx)
 
                     for (EngravingItem* el : parens) {
                         el->mutldata()->moveX(-xPosDiff);
+                    }
+                } else if (!seg.isTimeSigRepeatAnnounceType()) {
+                    // Left-align to parenthesis if present
+                    double xLeftParens = DBL_MAX;
+                    for (EngravingItem* paren : parens) {
+                        if (toParenthesis(paren)->direction() == DirectionH::LEFT) {
+                            xLeftParens = paren->x() + paren->ldata()->bbox().left();
+                        }
+                    }
+                    if (xLeftParens != DBL_MAX) {
+                        timeSig->mutldata()->moveX(-xLeftParens);
+                        for (EngravingItem* paren : parens) {
+                            paren->mutldata()->moveX(-xLeftParens);
+                        }
+                    }
+                } else {
+                    // TimeSigRepeatAnnounce: right-align to segment
+                    double xRight = -DBL_MAX;
+                    xRight = std::max(xRight, timeSig->shape().right() + timeSig->x());
+                    for (EngravingItem* paren : parens) {
+                        xRight = std::max(xRight, paren->ldata()->bbox().right() + paren->x());
+                    }
+                    if (xRight != -DBL_MAX) {
+                        timeSig->mutldata()->moveX(-xRight);
+                        for (EngravingItem* paren : parens) {
+                            paren->mutldata()->moveX(-xRight);
+                        }
                     }
                 }
             }
@@ -1225,7 +1257,7 @@ void SystemLayout::layoutSystemElements(System* system, LayoutContext& ctx)
     //-------------------------------------------------------------
 
     if (!hasFretDiagram) {
-        HarmonyLayout::layoutHarmonies(sl, ctx);
+        HarmonyLayout::autoplaceHarmonies(sl, ctx);
         HarmonyLayout::alignHarmonies(system, sl, true, ctx.conf().maxChordShiftAbove(), ctx.conf().maxChordShiftBelow());
     }
 
@@ -1273,7 +1305,12 @@ void SystemLayout::layoutSystemElements(System* system, LayoutContext& ctx)
         for (const Segment* s : sl) {
             for (EngravingItem* e : s->annotations()) {
                 if (e->isFretDiagram()) {
-                    TLayout::layoutItem(e, ctx);
+                    Autoplace::autoplaceSegmentElement(e, e->mutldata());
+                    if (Harmony* harmony = toFretDiagram(e)->harmony()) {
+                        SkylineLine& skl = system->staff(e->staffIdx())->skyline().north();
+                        Shape harmShape = harmony->ldata()->shape().translated(harmony->pos() + e->pos() + s->pos() + s->measure()->pos());
+                        skl.add(harmShape);
+                    }
                 }
             }
         }
@@ -1282,7 +1319,7 @@ void SystemLayout::layoutSystemElements(System* system, LayoutContext& ctx)
         // Harmony, 2nd place
         //-------------------------------------------------------------
 
-        HarmonyLayout::layoutHarmonies(sl, ctx);
+        HarmonyLayout::autoplaceHarmonies(sl, ctx);
         HarmonyLayout::alignHarmonies(system, sl, false, ctx.conf().maxFretShiftAbove(), ctx.conf().maxFretShiftBelow());
     }
 
@@ -1417,10 +1454,14 @@ void SystemLayout::layoutSystemElements(System* system, LayoutContext& ctx)
             }
 
             if (s->isType(SegmentType::TimeSigType)) {
-                TimeSig* ts = toTimeSig(s->element(e->track()));
-                TimeSigPlacement timeSigPlacement = ts->style().styleV(Sid::timeSigPlacement).value<TimeSigPlacement>();
+                EngravingItem* el = s->element(e->track());
+                TimeSig* timeSig = el ? toTimeSig(el) : nullptr;
+                if (!timeSig) {
+                    continue;
+                }
+                TimeSigPlacement timeSigPlacement = timeSig->style().styleV(Sid::timeSigPlacement).value<TimeSigPlacement>();
                 if (timeSigPlacement == TimeSigPlacement::ACROSS_STAVES) {
-                    if (!ts->showOnThisStaff()) {
+                    if (!timeSig->showOnThisStaff()) {
                         e->mutldata()->reset();
                     }
                     continue;
@@ -2781,7 +2822,11 @@ void SystemLayout::updateSkylineForElement(EngravingItem* element, const System*
     Skyline& skyline = system->staff(element->staffIdx())->skyline();
     SkylineLine& skylineLine = element->placeAbove() ? skyline.north() : skyline.south();
     for (ShapeElement& shapeEl : skylineLine.elements()) {
-        if (shapeEl.item() == element) {
+        const EngravingItem* itemInSkyline = shapeEl.item();
+        if (itemInSkyline && itemInSkyline->isText() && itemInSkyline->explicitParent() && itemInSkyline->parent()->isSLineSegment()) {
+            itemInSkyline = itemInSkyline->parentItem();
+        }
+        if (itemInSkyline == element) {
             shapeEl.translate(0.0, yMove);
         }
     }
@@ -2944,8 +2989,8 @@ bool SystemLayout::elementHasAnotherStackedOutside(const EngravingItem* element,
         if (!intersectHorizontally) {
             continue;
         }
-        bool skylineElementIsStackedOnIt = skylineLine.isNorth() ? skylineElement.top() < elemShapeBottom : skylineElement.bottom()
-                                           > elemShapeTop;
+        bool skylineElementIsStackedOnIt = skylineLine.isNorth() ? skylineElement.top() < elemShapeTop
+                                           : skylineElement.bottom() > elemShapeBottom;
         if (skylineElementIsStackedOnIt) {
             return true;
         }

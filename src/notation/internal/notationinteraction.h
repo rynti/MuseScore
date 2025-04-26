@@ -94,6 +94,8 @@ public:
     void selectTopOrBottomOfChord(MoveDirection d) override;
     void moveSegmentSelection(MoveDirection d) override;
 
+    EngravingItem* contextItem() const override;
+
     // SelectionFilter
     bool isSelectionTypeFiltered(SelectionFilterType type) const override;
     void setSelectionTypeFiltered(SelectionFilterType type, bool filtered) override;
@@ -196,7 +198,7 @@ public:
     void addTiedNoteToChord() override;
     void addSlurToSelection() override;
     void addOttavaToSelection(OttavaType type) override;
-    void addHairpinOnGripDrag(engraving::Dynamic* dynamic, bool isLeftGrip) override;
+    void addHairpinOnGripDrag(engraving::EditData& ed, bool isLeftGrip) override;
     void addHairpinsToSelection(HairpinType type) override;
     void putRestToSelection() override;
     void putRest(Duration duration) override;
@@ -414,6 +416,7 @@ private:
     void resetDropData();
 
     bool selectInstrument(mu::engraving::InstrumentChange* instrumentChange);
+    void cleanupDrumsetChanges(mu::engraving::InstrumentChange* instrumentChange) const;
 
     void applyDropPaletteElement(mu::engraving::Score* score, mu::engraving::EngravingItem* target, mu::engraving::EngravingItem* e,
                                  Qt::KeyboardModifiers modifiers, muse::PointF pt = muse::PointF(), bool pasteMode = false);

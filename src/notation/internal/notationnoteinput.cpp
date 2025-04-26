@@ -432,10 +432,16 @@ void NotationNoteInput::addNote(const NoteInputParams& params, NoteAddingMode ad
 
     mu::engraving::EditData editData(m_scoreCallbacks);
 
-    startEdit(TranslatableString("undoableAction", "Enter note"));
-
     bool addToUpOnCurrentChord = addingMode == NoteAddingMode::CurrentChord;
     bool insertNewChord = addingMode == NoteAddingMode::InsertChord;
+
+    if (addToUpOnCurrentChord) {
+        startEdit(TranslatableString("undoableAction", "Add note to chord"));
+    } else if (insertNewChord) {
+        startEdit(TranslatableString("undoableAction", "Insert note"));
+    } else {
+        startEdit(TranslatableString("undoableAction", "Enter note"));
+    }
     score()->cmdAddPitch(editData, params, addToUpOnCurrentChord, insertNewChord);
 
     apply();
@@ -460,7 +466,7 @@ void NotationNoteInput::padNote(const Pad& pad)
 
     if (pad >= Pad::NOTE00 && pad <= Pad::NOTE1024) {
         const NoteInputState& is = score()->inputState();
-        if (!is.rest() && is.usingNoteEntryMethod(NoteInputMethod::BY_DURATION)) {
+        if (!is.rest() && isNoteInputMode() && is.usingNoteEntryMethod(NoteInputMethod::BY_DURATION)) {
             score()->toggleAccidental(AccidentalType::NONE);
         }
     }
@@ -591,7 +597,7 @@ void NotationNoteInput::moveInputNotes(bool up, PitchMode mode)
 
         switch (mode) {
         case PitchMode::CHROMATIC:
-            newVal.pitch = val.pitch + up ? 1 : -1;
+            newVal.pitch = val.pitch + (up ? 1 : -1);
             break;
         case PitchMode::DIATONIC: {
             const int oldLine = mu::engraving::noteValToLine(val, is.staff(), is.tick());
@@ -609,6 +615,17 @@ void NotationNoteInput::moveInputNotes(bool up, PitchMode mode)
     }
 
     setInputNotes(notes);
+}
+
+void NotationNoteInput::setRestMode(bool rest)
+{
+    mu::engraving::InputState& is = score()->inputState();
+    if (is.rest() == rest) {
+        return;
+    }
+
+    is.setRest(rest);
+    notifyAboutStateChanged();
 }
 
 void NotationNoteInput::setAccidental(AccidentalType accidentalType)
@@ -658,23 +675,9 @@ void NotationNoteInput::setCurrentVoice(voice_idx_t voiceIndex)
 {
     TRACEFUNC;
 
-    if (!isVoiceIndexValid(voiceIndex)) {
-        return;
-    }
-
     mu::engraving::InputState& inputState = score()->inputState();
-
-    // TODO: Inserting notes to a new voice in the middle of a tuplet is not yet supported. In this case
-    // we'll move the input to the start of the tuplet...
-    if (const Segment* prevSeg = inputState.segment()) {
-        const ChordRest* prevCr = prevSeg->cr(inputState.track());
-        //! NOTE: if there's an existing ChordRest at the new voiceIndex, we don't need to move the cursor
-        if (prevCr && prevCr->topTuplet() && !prevSeg->cr(voiceIndex)) {
-            Segment* newSeg = score()->tick2segment(prevCr->topTuplet()->tick());
-            if (newSeg) {
-                inputState.setSegment(newSeg);
-            }
-        }
+    if (!isVoiceIndexValid(voiceIndex) || voiceIndex == inputState.voice()) {
+        return;
     }
 
     inputState.setVoice(voiceIndex);
@@ -869,7 +872,14 @@ void NotationNoteInput::updateInputState()
 {
     TRACEFUNC;
 
-    score()->inputState().update(score()->selection());
+    NoteInputState& is = score()->inputState();
+    is.update(score()->selection());
+
+    if (!configuration()->addAccidentalDotsArticulationsToNextNoteEntered()) {
+        is.setAccidentalType(AccidentalType::NONE);
+        is.setDots(0);
+        is.setArticulationIds({});
+    }
 
     notifyAboutStateChanged();
 }

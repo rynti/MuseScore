@@ -441,7 +441,7 @@ staff_idx_t EngravingItem::effectiveStaffIdx() const
     }
 
     const System* system = toSystem(findAncestor(ElementType::SYSTEM));
-    if (!system) {
+    if (!system || system->vbox()) {
         return vStaffIdx();
     }
 
@@ -1451,7 +1451,10 @@ PropertyPropagation EngravingItem::propertyPropagation(const EngravingItem* dest
     const Staff* destinationStaff = destinationItem->staff();
 
     if (sourceScore == destinationScore) {
-        if (sourceStaff != destinationStaff && (propertyId == Pid::VISIBLE || propertyGroup(propertyId) == PropertyGroup::POSITION)) {
+        const bool diffStaff = sourceStaff != destinationStaff;
+        const bool visibleOrPosition = propertyId == Pid::VISIBLE || propertyGroup(propertyId) == PropertyGroup::POSITION;
+        const bool linkSameScore = propertyLinkSameScore(propertyId);
+        if ((diffStaff && visibleOrPosition) || !linkSameScore) {
             // Allow visibility and position to stay independent
             return PropertyPropagation::NONE;
         }

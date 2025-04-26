@@ -547,6 +547,12 @@ void MStyle::read(XmlReader& e, compat::ReadChordListHook* readChordListHook)
         // Didn't exist before 4.5. Default to false for compatibility.
         set(Sid::scaleRythmicSpacingForSmallNotes, false);
         set(Sid::maskBarlinesForText, false);
+        set(Sid::showCourtesiesRepeats, false);
+        set(Sid::showCourtesiesOtherJumps, false);
+        set(Sid::showCourtesiesAfterCancellingRepeats, false);
+        set(Sid::showCourtesiesAfterCancellingOtherJumps, false);
+        set(Sid::changesBeforeBarlineRepeats, false);
+        set(Sid::changesBeforeBarlineOtherJumps, false);
     }
 
     if (m_version < 420 && !MScore::testMode) {

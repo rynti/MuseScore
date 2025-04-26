@@ -81,6 +81,8 @@ public:
     int iconsFontSize(IconSizeType type) const override;
     async::Notification iconsFontChanged() const override;
 
+    io::path_t appIconPath() const override;
+
     std::string musicalFontFamily() const override;
     int musicalFontSize() const override;
     async::Notification musicalFontChanged() const override;
@@ -125,7 +127,10 @@ public:
 
 private:
     void initThemes();
+    void correctUserFontIfNeeded();
+
     void notifyAboutCurrentThemeChanged();
+
     void updateCurrentTheme();
     void updateThemes();
 
@@ -156,6 +161,8 @@ private:
     ThemeList m_themes;
     size_t m_currentThemeIndex = 0;
     std::optional<double> m_customDPI;
+
+    Config m_config;
 };
 }
 

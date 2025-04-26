@@ -764,6 +764,15 @@ void Dynamic::drawEditMode(Painter* p, EditData& ed, double currentViewScaling)
     }
 }
 
+bool Dynamic::isTextualEditAllowed(EditData& ed) const
+{
+    if (ed.key == Key_Tab) {
+        return false;
+    }
+
+    return TextBase::isTextualEditAllowed(ed);
+}
+
 //---------------------------------------------------------
 //   hasLeftHairpin
 //---------------------------------------------------------
@@ -809,6 +818,18 @@ void Dynamic::findAdjacentHairpins()
             }
         }
     }
+}
+
+Shape Dynamic::symShapeWithCutouts(SymId id) const
+{
+    Staff* stf = staff();
+    double staffMag = stf ? stf->staffMag(tick()) : 1.0;
+    Shape shape = score()->engravingFont()->shapeWithCutouts(id, magS() * staffMag * dynamicsSize());
+    for (ShapeElement& element : shape.elements()) {
+        element.setItem(this);
+    }
+
+    return shape;
 }
 
 //---------------------------------------------------------

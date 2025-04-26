@@ -47,7 +47,7 @@ public:
 
     static double computeSpacingForFullSystem(System* system, double stretchReduction = 1.0, double squeezeFactor = 1.0,
                                               bool overrideMinMeasureWidth = false);
-    static double updateSpacingForLastAddedMeasure(System* system);
+    static double updateSpacingForLastAddedMeasure(System* system, bool startOfContinuousLayoutRegion = false);
     static void squeezeSystemToFit(System* system, double& curSysWidth, double targetSysWidth);
     static void justifySystem(System* system, double curSysWidth, double targetSystemWidth);
 
@@ -113,6 +113,7 @@ private:
     static double durationStretchForMMRests(const Segment* segment);
     static double durationStretchForTicks(double slope, const Fraction& ticks);
     static bool needsCueSizeSpacing(const Segment* segment);
+    static bool needsHeaderSpacingExceptions(const Segment* seg, const Segment* nextSeg);
 
     static void applyCrossBeamSpacingCorrection(Segment* thisSeg, Segment* nextSeg, double& width);
     static CrossBeamSpacing computeCrossBeamSpacing(Segment* thisSeg, Segment* nextSeg);

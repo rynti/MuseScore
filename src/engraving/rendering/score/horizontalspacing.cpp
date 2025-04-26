@@ -78,7 +78,7 @@ double HorizontalSpacing::computeSpacingForFullSystem(System* system, double str
     return ctx.xCur;
 }
 
-double HorizontalSpacing::updateSpacingForLastAddedMeasure(System* system)
+double HorizontalSpacing::updateSpacingForLastAddedMeasure(System* system, bool startOfContinuousLayoutRegion)
 {
     HorizontalSpacingContext ctx;
     ctx.system = system;
@@ -95,7 +95,7 @@ double HorizontalSpacing::updateSpacingForLastAddedMeasure(System* system)
 
     if (secondToLast) {
         ctx.xCur = secondToLast->x();
-        if (secondToLast->isHBox() || last->isHBox()) {
+        if (secondToLast->isHBox() || last->isHBox() || startOfContinuousLayoutRegion) {
             ctx.xCur += secondToLast->width();
         }
     } else {
@@ -106,7 +106,7 @@ double HorizontalSpacing::updateSpacingForLastAddedMeasure(System* system)
         last->mutldata()->setPosX(ctx.xCur);
         last->computeMinWidth();
         ctx.xCur += last->width();
-    } else if (!secondToLast || secondToLast->isHBox()) {
+    } else if (!secondToLast || secondToLast->isHBox() || startOfContinuousLayoutRegion) {
         spaceMeasureGroup({ toMeasure(last) }, ctx);
     } else {
         ctx.startMeas = toMeasure(last);
@@ -342,13 +342,17 @@ void HorizontalSpacing::spaceAgainstPreviousSegments(Segment* segment, std::vect
         }
 
         bool timeSigAboveBarlineCase = segmentHasTimeSigAboveStaff && prevSeg->isEndBarLineType() && prevSeg->tick() == segment->tick();
-        bool timeSigAboveKeySigCase = segmentHasTimeSigAboveStaff && prevSeg->isType(SegmentType::KeySigType)
+        bool timeSigAboveKeySigCase = segmentHasTimeSigAboveStaff && prevSeg->isType(SegmentType::KeySig)
                                       && prevSeg->tick() == segment->tick();
+        bool timeSigAboveRepeatKeySigCase = segmentHasTimeSigAboveStaff && prevSeg->isType(SegmentType::KeySigRepeatAnnounce)
+                                            && prevSeg->tick() == segment->tick();
 
         if (timeSigAboveBarlineCase) {
             x = xPrevSeg + prevSeg->minRight() - 0.5 * prevSeg->style().styleMM(Sid::barWidth); // align to the preceding barline
         } else if (timeSigAboveKeySigCase) {
             x = xPrevSeg + segment->minLeft(); // align to the preceding keySig
+        } else if (timeSigAboveRepeatKeySigCase) {
+            x = xPrevSeg + prevSeg->minRight();
         } else {
             double minHorDist = minHorizontalDistance(prevSeg, segment, ctx.squeezeFactor);
             minHorDist = std::max(minHorDist, spaceLyricsAgainstBarlines(prevSeg, segment, ctx));
@@ -362,6 +366,9 @@ void HorizontalSpacing::spaceAgainstPreviousSegments(Segment* segment, std::vect
                 double xMovement = spaceIncrease;
                 for (size_t j = i; j < prevSegPositions.size(); ++j) {
                     SegmentPosition& segPos = prevSegPositions[j];
+                    if (ignoreSegmentForSpacing(segPos.segment)) {
+                        continue;
+                    }
                     segPos.xPosInSystemCoords += xMovement;
                     if (segPos.segment->isChordRestType()) {
                         xMovement += spaceIncrease;
@@ -390,7 +397,7 @@ bool HorizontalSpacing::stopCheckingPreviousSegments(const SegmentPosition& prev
     Fraction prevSegEndTick = prevSeg->tick() + prevSeg->ticks();
     Fraction curSegTick = curSeg->tick();
 
-    if (prevSegEndTick >= curSegTick) {
+    if (prevSegEndTick >= curSegTick || curSeg->hasTimeSigAboveStaves()) {
         return false;
     }
 
@@ -1034,7 +1041,12 @@ void HorizontalSpacing::setPositionsAndWidths(const std::vector<SegmentPosition>
         Measure* curSegMeasure = curSeg->measure();
         Measure* nextSegMeasure = nextSeg->measure();
 
-        double segWidth = curSegMeasure == nextSegMeasure || nextSeg->isStartRepeatBarLineType() ? nextX - curX : curSeg->minRight();
+        bool leadingNonCRException = ((nextSeg->isKeySigType() || nextSeg->isTimeSigType()
+                                       || nextSeg->isClefType()) && !curSeg->isType(SegmentType::BarLineType));
+        bool computeWidthByDifferenceFromNext = curSegMeasure == nextSegMeasure || nextSeg->isStartRepeatBarLineType()
+                                                || leadingNonCRException;
+
+        double segWidth = computeWidthByDifferenceFromNext ? nextX - curX : curSeg->minRight();
 
         curSeg->setWidth(segWidth);
 
@@ -1183,10 +1195,7 @@ double HorizontalSpacing::minHorizontalDistance(const Segment* f, const Segment*
         return f->minRight() + ns->minLeft() + f->style().styleMM(Sid::headerToLineStartDistance);
     }
 
-    bool systemHeaderGap = f->segmentType() != SegmentType::ChordRest && f->segmentType() != SegmentType::StartRepeatBarLine
-                           && f->rtick().isZero() && !f->hasTimeSigAboveStaves()
-                           && (ns->measure()->isFirstInSystem() || ns->measure()->prev()->isHBox())
-                           && (ns->isStartRepeatBarLineType() || ns->isChordRestType() || (ns->isClefType() && !ns->header()));
+    bool systemHeaderGap = needsHeaderSpacingExceptions(f, ns);
 
     double ww = -DBL_MAX;          // can remain negative
     double d = 0.0;
@@ -1269,6 +1278,21 @@ double HorizontalSpacing::minHorizontalDistance(const Segment* f, const Segment*
     computeHangingLineWidth(f, ns, w, systemHeaderGap, systemEnd);
 
     return w;
+}
+
+bool HorizontalSpacing::needsHeaderSpacingExceptions(const Segment* seg, const Segment* nextSeg)
+{
+    static const std::unordered_set<SegmentType> HEADER_SEGMENT_TYPES = { SegmentType::HeaderClef,
+                                                                          SegmentType::KeySig,
+                                                                          SegmentType::KeySigStartRepeatAnnounce,
+                                                                          SegmentType::Ambitus,
+                                                                          SegmentType::TimeSig,
+                                                                          SegmentType::TimeSigStartRepeatAnnounce };
+
+    return muse::contains(HEADER_SEGMENT_TYPES, seg->segmentType())
+           && seg->rtick().isZero() && !seg->hasTimeSigAboveStaves()
+           && (nextSeg->measure()->isFirstInSystem() || nextSeg->measure()->prev()->isHBox())
+           && (nextSeg->isStartRepeatBarLineType() || nextSeg->isChordRestType());
 }
 
 //---------------------------------------------------------
@@ -1515,7 +1539,7 @@ bool HorizontalSpacing::isNeverKernable(const EngravingItem* item)
 
 bool HorizontalSpacing::isAlwaysKernable(const EngravingItem* item)
 {
-    return item->isTextBase() || item->isChordLine() || item->isParenthesis();
+    return item->isTextBase() || item->isChordLine() || item->isParenthesis() || item->isFretDiagram();
 }
 
 bool HorizontalSpacing::ignoreItems(const EngravingItem* item1, const EngravingItem* item2)
@@ -1533,17 +1557,20 @@ KerningType HorizontalSpacing::doComputeKerningType(const EngravingItem* item1, 
     ElementType type1 = item1->type();
     switch (type1) {
     case ElementType::BAR_LINE:
-        return item2->isLyrics() ? KerningType::ALLOW_COLLISION : KerningType::NON_KERNING;
+        return item2->isLyrics() || item2->isHarmony() || item2->isFretDiagram() ? KerningType::ALLOW_COLLISION : KerningType::NON_KERNING;
     case ElementType::CHORDLINE:
         return item2->isBarLine() ? KerningType::ALLOW_COLLISION : KerningType::KERNING;
     case ElementType::HARMONY:
-        return item2->isHarmony() ? KerningType::NON_KERNING : KerningType::KERNING;
-    case ElementType::LYRICS:
-        return computeLyricsKerningType(toLyrics(item1), item2);
+    case ElementType::FRET_DIAGRAM:
+        return item2->isHarmony() || item2->isFretDiagram() ? KerningType::NON_KERNING : KerningType::KERNING;
+    case ElementType::LYRICS
+        : return computeLyricsKerningType(toLyrics(item1), item2);
     case ElementType::NOTE:
         return computeNoteKerningType(toNote(item1), item2);
     case ElementType::STEM_SLASH:
         return computeStemSlashKerningType(toStemSlash(item1), item2);
+    case ElementType::PARENTHESIS:
+        return item2->isBarLine() ? KerningType::NON_KERNING : KerningType::KERNING;
     default:
         return KerningType::KERNING;
     }

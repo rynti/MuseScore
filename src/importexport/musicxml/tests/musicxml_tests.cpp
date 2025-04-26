@@ -562,6 +562,12 @@ TEST_F(MusicXml_Tests, dsalCodaMisplaced) {
 TEST_F(MusicXml_Tests, durationLargeErrorMscx) {
     musicXmlImportTestRef("testDurationLargeError");
 }
+TEST_F(MusicXml_Tests, duplicateFermataOnGraceNote) {
+    musicXmlImportTestRef("testDuplicateFermataOnGraceNote");
+}
+TEST_F(MusicXml_Tests, duplicateFermataOnGraceNoteAndMainNote) {
+    musicXmlImportTestRef("testDuplicateFermataOnGraceNoteAndMainNote");
+}
 TEST_F(MusicXml_Tests, duplicateInstrChange) {
     musicXmlImportTestRef("testDuplicateInstrChange");
 }
@@ -834,7 +840,7 @@ TEST_F(MusicXml_Tests, lines4) {
     musicXmlMscxExportTestRef("testLines4");
 }
 TEST_F(MusicXml_Tests, lineDetails) {
-    musicXmlMscxExportTestRef("testLineDetails");
+    musicXmlIoTest("testLineDetails");
 }
 TEST_F(MusicXml_Tests, lyricBracket) {
     musicXmlImportTestRef("testLyricBracket");

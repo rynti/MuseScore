@@ -347,6 +347,10 @@ void Read206::readTextStyle206(MStyle* style, XmlReader& e, ReadContext& ctx, st
         ts = textStyle(ss);
     }
     for (const auto& i : *ts) {
+        if (ctx.shouldSkipProperty(i.pid)) {
+            continue;
+        }
+
         PropertyValue value;
         if (i.sid == Sid::NOSTYLE) {
             break;
@@ -2343,7 +2347,7 @@ EngravingItem* Read206::readArticulation(EngravingItem* parent, XmlReader& e, Re
             case SymId::fermataLongBelow:
             case SymId::fermataVeryLongAbove:
             case SymId::fermataVeryLongBelow: {
-                Fermata* fe = Factory::createFermata(ctx.dummy());
+                Fermata* fe = Factory::createFermata(ctx.dummy()->segment());
                 fe->setSymIdAndTimeStretch(sym);
                 el = fe;
             } break;
@@ -2381,7 +2385,7 @@ EngravingItem* Read206::readArticulation(EngravingItem* parent, XmlReader& e, Re
     }
     // Special case for "no type" = ufermata, with missing subtype tag
     if (!el) {
-        Fermata* f = Factory::createFermata(ctx.dummy());
+        Fermata* f = Factory::createFermata(ctx.dummy()->segment());
         f->setSymIdAndTimeStretch(sym);
         el = f;
     }

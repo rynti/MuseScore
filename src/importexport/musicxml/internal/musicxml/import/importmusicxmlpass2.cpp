@@ -1223,23 +1223,25 @@ static void addFermataToChord(const Notation& notation, ChordRest* cr)
     const SymId articSym = notation.symId();
     const String direction = notation.attribute(u"type");
     const Color color = Color::fromString(notation.attribute(u"color"));
-    Fermata* na = Factory::createFermata(cr);
-    na->setSymIdAndTimeStretch(articSym);
-    na->setTrack(cr->track());
+    Segment* seg = cr->segment();
+    Fermata* fermata = Factory::createFermata(seg ? seg : cr->score()->dummy()->segment());
+    fermata->setSymIdAndTimeStretch(articSym);
+    fermata->setTrack(cr->track());
     if (color.isValid()) {
-        na->setColor(color);
+        fermata->setColor(color);
     }
     if (!direction.empty()) {
-        na->setPlacement(direction == "inverted" ? PlacementV::BELOW : PlacementV::ABOVE);
-        na->resetProperty(Pid::OFFSET);
+        fermata->setPlacement(direction == "inverted" ? PlacementV::BELOW : PlacementV::ABOVE);
+        fermata->resetProperty(Pid::OFFSET);
     } else {
-        na->setPlacement(na->propertyDefault(Pid::PLACEMENT).value<PlacementV>());
+        fermata->setPlacement(fermata->propertyDefault(Pid::PLACEMENT).value<PlacementV>());
     }
-    setElementPropertyFlags(na, Pid::PLACEMENT, direction);
-    if (cr->segment() == nullptr && cr->isGrace()) {
-        cr->addFermata(na);           // store for later move to segment
+    setElementPropertyFlags(fermata, Pid::PLACEMENT, direction);
+    if (!seg) {
+        assert(cr->isGrace());
+        cr->addFermata(fermata); // store for later move to segment
     } else {
-        cr->segment()->add(na);
+        cr->segment()->add(fermata);
     }
 }
 
@@ -1394,8 +1396,8 @@ static bool convertArticulationToSymId(const String& mxmlName, SymId& id)
         { u"staccato",               SymId::articStaccatoAbove },
         { u"tenuto",                 SymId::articTenutoAbove },
         { u"detached-legato",        SymId::articTenutoStaccatoAbove },
-        { u"staccatissimo",          SymId::articStaccatissimoWedgeAbove },
-        { u"spiccato",               SymId::articStaccatissimoAbove },
+        { u"staccatissimo",          SymId::articStaccatissimoAbove },
+        { u"spiccato",               SymId::articStaccatissimoStrokeAbove },
         { u"stress",                 SymId::articStressAbove },
         { u"unstress",               SymId::articUnstressAbove },
         { u"soft-accent",            SymId::articSoftAccentAbove },
@@ -1415,6 +1417,8 @@ static bool convertArticulationToSymId(const String& mxmlName, SymId& id)
         { u"flip",                   SymId::brassFlip },
         { u"smear",                  SymId::brassSmear },
         { u"open",                   SymId::brassMuteOpen },
+        { u"half-muted",             SymId::brassMuteHalfClosed }, // ignoring the smufl attribute
+        { u"golpe",                  SymId::guitarGolpe },
 
         { u"belltree", SymId::handbellsBelltree },
         { u"damp", SymId::handbellsDamp3 },
@@ -2594,14 +2598,14 @@ static void addGraceChordsBefore(Chord* c, GraceChordList& gcl)
 {
     for (int i = static_cast<int>(gcl.size()) - 1; i >= 0; i--) {
         Chord* gc = gcl.at(i);
-        for (EngravingItem* e : gc->el()) {
+        std::vector<EngravingItem*> el = gc->el(); // copy, because modified during loop
+        for (EngravingItem* e : el) {
             if (e->isFermata()) {
                 c->segment()->add(e);
                 gc->removeFermata(toFermata(e));
-                break;                          // out of the door, line on the left, one cross each
             }
         }
-        c->add(gc);            // TODO check if same voice ?
+        c->add(gc); // TODO check if same voice ?
         coerceGraceCue(c, gc);
     }
     gcl.clear();
@@ -3062,7 +3066,7 @@ void MusicXmlParserPass2::staffDetails(const String& partId, Measure* measure)
 
     staff_idx_t staffIdx = m_score->staffIdx(part) + n;
 
-    StringData* t = new StringData;
+    StringData stringData;
     String visible = m_e.attribute("print-object");
     String spacing = m_e.attribute("print-spacing");
     if (visible == "no") {
@@ -3096,15 +3100,22 @@ void MusicXmlParserPass2::staffDetails(const String& partId, Measure* measure)
             // save staff lines for later
             staffLines = m_e.readInt();
             // for a TAB staff also resize the string table and init with zeroes
-            if (t) {
-                if (0 < staffLines) {
-                    t->stringList() = std::vector<instrString>(staffLines);
-                } else {
-                    m_logger->logError(String(u"illegal staff-lines %1").arg(staffLines), &m_e);
-                }
+            if (0 < staffLines) {
+                stringData.stringList() = std::vector<instrString>(staffLines);
+            } else {
+                m_logger->logError(String(u"illegal staff-lines %1").arg(staffLines), &m_e);
             }
+        } else if (m_e.name() == "line-detail") {
+            const Color color = Color::fromString(m_e.attribute("color"));
+            if (color.isValid()) {
+                m_score->staff(staffIdx)->staffType(Fraction(0, 1))->setColor(color);
+            }
+            if (m_e.attribute("print-object") == u"no") {
+                m_score->staff(staffIdx)->staffType(Fraction(0, 1))->setInvisible(true);
+            }
+            m_e.skipCurrentElement();
         } else if (m_e.name() == "staff-tuning") {
-            staffTuning(t);
+            staffTuning(&stringData);
         } else if (m_e.name() == "staff-size") {
             const double val = m_e.readDouble() / 100;
             m_score->staff(staffIdx)->setProperty(Pid::MAG, val);
@@ -3117,20 +3128,18 @@ void MusicXmlParserPass2::staffDetails(const String& partId, Measure* measure)
         setStaffLines(m_score, staffIdx, staffLines);
     }
 
-    if (t) {
-        Instrument* i = part->instrument();
-        if (m_score->staff(staffIdx)->isTabStaff(Fraction(0, 1))) {
-            if (i->stringData()->frets() == 0) {
-                t->setFrets(25);
-            } else {
-                t->setFrets(i->stringData()->frets());
-            }
-        }
-        if (t->strings() > 0) {
-            i->setStringData(*t);
+    Instrument* i = part->instrument();
+    if (m_score->staff(staffIdx)->isTabStaff(Fraction(0, 1))) {
+        if (i->stringData()->frets() == 0) {
+            stringData.setFrets(25);
         } else {
-            m_logger->logError(u"trying to change string data (not supported)", &m_e);
+            stringData.setFrets(i->stringData()->frets());
         }
+        if (stringData.strings() > 0) {
+            i->setStringData(stringData);
+        }
+    } else if (stringData.strings() > 0) {
+        m_logger->logError(u"trying to change string data for non-TAB staff (not supported)", &m_e);
     }
 }
 
@@ -6879,9 +6888,13 @@ Note* MusicXmlParserPass2::note(const String& partId,
     isSingleDrumset = instrument->drumset() && instruments.size() == 1;
     // begin allocation
     if (rest) {
-        const int track = msTrack + msVoice;
-        cr = addRest(m_score, measure, noteStartTime, track, msMove,
-                     duration, dura);
+        if (!grace) {
+            const int track = msTrack + msVoice;
+            cr = addRest(m_score, measure, noteStartTime, track, msMove,
+                         duration, dura);
+        } else {
+            LOGD("ignoring grace rest");
+        }
     } else {
         if (!grace) {
             // regular note
@@ -8491,10 +8504,7 @@ void MusicXmlParserNotations::arpeggio()
     if (m_arpeggioNo == 0) {
         m_arpeggioNo = 1;
     }
-    Color color = Color::fromString(m_e.attribute("color"));
-    if (color.isValid()) {
-        m_arpeggioColor = color;
-    }
+    m_arpeggioColor = Color::fromString(m_e.attribute("color"));
     m_e.skipCurrentElement();  // skip but don't log
 }
 
@@ -8981,6 +8991,7 @@ void MusicXmlParserNotations::parse()
         } else if (m_e.name() == "glissando") {
             glissandoSlide();
         } else if (m_e.name() == "non-arpeggiate") {
+            m_arpeggioColor = Color::fromString(m_e.attribute("color"));
             m_arpeggioType = u"non-arpeggiate";
             m_e.skipCurrentElement();  // skip but don't log
         } else if (m_e.name() == "ornaments") {

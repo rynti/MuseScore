@@ -102,7 +102,7 @@ private:
     bool moveSelectionAvailable(MoveSelectionType type) const;
     void moveSelection(MoveSelectionType type, MoveDirection direction);
     void move(MoveDirection direction, bool quickly = false);
-    void moveInputNotes(bool up, bool quickly = false);
+    void moveInputNotes(bool up, PitchMode mode);
     void movePitchDiatonic(MoveDirection direction, bool);
     void moveWithinChord(MoveDirection direction);
     void selectTopOrBottomOfChord(MoveDirection direction);
@@ -222,6 +222,9 @@ private:
     bool isNotationPage() const;
     bool isStandardStaff() const;
     bool isTablatureStaff() const;
+
+    void checkForScoreCorruptions();
+
     void registerAction(const muse::actions::ActionCode&, void (NotationActionController::*)(const muse::actions::ActionData& data),
                         bool (NotationActionController::*)() const = &NotationActionController::isNotationPage);
     void registerAction(const muse::actions::ActionCode&, void (NotationActionController::*)(),

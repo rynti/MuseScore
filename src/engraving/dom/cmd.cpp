@@ -1462,7 +1462,7 @@ bool Score::makeGap1(const Fraction& baseTick, staff_idx_t staffIdx, const Fract
             deleteOrShortenOutSpannersFromRange(tick, endTick, track, track + 1, filter);
         }
 
-        seg = m->undoGetSegment(SegmentType::ChordRest, tick);
+        seg = tm->undoGetSegment(SegmentType::ChordRest, tick);
         bool result = makeGapVoice(seg, track, newLen, tick);
         if (track == strack && !result) {   // makeGap failed for first voice
             return false;
@@ -1809,7 +1809,7 @@ void Score::changeCRlen(ChordRest* cr, const Fraction& dstF, bool fillWithRest)
     connectTies();
 
     if (elementToSelect) {
-        if (containsElement(elementToSelect)) {
+        if (canReselectItem(elementToSelect)) {
             select(elementToSelect, SelectType::SINGLE, 0);
         }
     }
@@ -4301,6 +4301,12 @@ void Score::cmdRealizeChordSymbols(bool literal, Voicing voicing, HDuration dura
             note->setNval(nval, tick);
         }
 
+        if (!seg->isChordRestType()) {
+            Segment* newCrSeg = seg->measure()->undoGetSegment(SegmentType::ChordRest, seg->tick());
+            newCrSeg->setTicks(seg->ticks());
+            seg = newCrSeg;
+        }
+
         setChord(this, seg, h->track(), chord, duration);     //add chord using template
         delete chord;
     }
@@ -5017,21 +5023,6 @@ void Score::cmdAddPitch(const EditData& ed, const NoteInputParams& params, bool 
     if (ds) {
         is.setDrumNote(params.drumPitch);
         is.setVoice(ds->voice(params.drumPitch));
-
-        if (is.segment()) {
-            Segment* seg = is.segment();
-            while (seg) {
-                if (seg->element(is.track())) {
-                    break;
-                }
-                seg = seg->prev(SegmentType::ChordRest);
-            }
-            if (seg) {
-                is.setSegment(seg);
-            } else {
-                is.setSegment(is.segment()->measure()->first(SegmentType::ChordRest));
-            }
-        }
     }
 
     cmdAddPitch(params.step, addFlag, insert);

@@ -270,7 +270,7 @@ MenuItem* AppMenuModel::makeViewMenu()
         makeMenuItem("toggle-timeline"),
         makeMenuItem("toggle-mixer"),
         makeMenuItem("toggle-piano-keyboard"),
-        // makeMenuItem("toggle-percussion-panel"), // still in development
+        makeMenuItem("toggle-percussion-panel"),
         makeMenuItem("playback-setup"),
         //makeMenuItem("toggle-scorecmp-tool"), // not implemented
         makeSeparator(),
@@ -436,6 +436,7 @@ MenuItem* AppMenuModel::makeDiagnosticsMenu()
 
     MenuItemList items {
         makeMenuItem("diagnostic-save-diagnostic-files"),
+        makeMenuItem("playback-reload-cache"),
         makeMenu(TranslatableString("appshell/menu/diagnostics", "&System"), systemItems, "menu-system")
     };
 
@@ -450,7 +451,7 @@ MenuItem* AppMenuModel::makeDiagnosticsMenu()
             museSamplerItems << makeMenuItem("musesampler-reload");
         }
 
-        items << makeMenu(TranslatableString("appshell/menu/diagnostics", "&Muse Sampler"), museSamplerItems, "menu-musesampler");
+        items << makeMenu(TranslatableString("appshell/menu/diagnostics", "&MuseSampler"), museSamplerItems, "menu-musesampler");
     }
 #endif
 
@@ -478,7 +479,8 @@ MenuItem* AppMenuModel::makeDiagnosticsMenu()
             makeMenuItem("show-skylines"),
             makeMenuItem("show-system-bounding-rects"),
             makeMenuItem("show-element-masks"),
-            makeMenuItem("show-corrupted-measures")
+            makeMenuItem("mark-corrupted-measures"),
+            makeMenuItem("check-for-score-corruptions")
         };
 
         MenuItemList extensionsItems {
@@ -747,7 +749,10 @@ MenuItemList AppMenuModel::makePluginsItems()
     MenuItemList pluginsWithoutCategories;
     for (const Manifest& m : enabledExtensions) {
         std::string categoryStr = m.category.toStdString();
-        if (muse::contains(categories, categoryStr)) {
+        if (!categoryStr.empty()) {
+            if (!muse::contains(categories, categoryStr)) {
+                categories[categoryStr] = TranslatableString("extensions", m.category);
+            }
             MenuItemList& items = categoriesMap[categoryStr];
             addMenuItems(items, m);
         } else {

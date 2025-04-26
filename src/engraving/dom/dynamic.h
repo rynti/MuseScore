@@ -124,6 +124,8 @@ public:
     void endEditDrag(EditData&) override;
     void drawEditMode(muse::draw::Painter* painter, EditData& editData, double currentViewScaling) override;
 
+    bool isTextualEditAllowed(EditData&) const override;
+
     Hairpin* leftHairpin() const { return m_leftHairpin; }
     Hairpin* rightHairpin() const { return m_rightHairpin; }
 
@@ -137,6 +139,8 @@ public:
     double rightDragOffset() const { return m_rightDragOffset; }
 
     void findAdjacentHairpins();
+
+    Shape symShapeWithCutouts(SymId id) const override;
 
 private:
 

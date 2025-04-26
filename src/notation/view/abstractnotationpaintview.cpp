@@ -239,10 +239,10 @@ void AbstractNotationPaintView::onLoadNotation(INotationPtr)
         m_notation->painting()->setViewMode(m_notation->viewState()->viewMode());
     }
 
-    INotationInteractionPtr interaction = notationInteraction();
-
-    m_notation->notationChanged().onNotify(this, [this, interaction]() {
-        interaction->hideShadowNote();
+    m_notation->notationChanged().onNotify(this, [this]() {
+        if (INotationInteractionPtr interaction = notationInteraction()) {
+            interaction->hideShadowNote();
+        }
         m_shadowNoteRect = RectF();
         scheduleRedraw();
     });
@@ -251,6 +251,8 @@ void AbstractNotationPaintView::onLoadNotation(INotationPtr)
     if (isNoteEnterMode()) {
         emit activeFocusRequested();
     }
+
+    INotationInteractionPtr interaction = notationInteraction();
 
     interaction->noteInput()->stateChanged().onNotify(this, [this]() {
         onNoteInputStateChanged();
@@ -629,9 +631,11 @@ void AbstractNotationPaintView::paint(QPainter* qp)
     bool isPrinting = publishMode() || m_inputController->readonly();
     notation()->painting()->paintView(painter, toLogical(rect), isPrinting);
 
-    INotationNoteInputPtr noteInput = notationNoteInput();
+    const ui::UiContext uiCtx = uiContextResolver()->currentUiContext();
+    const bool isOnNotationPage = uiCtx == ui::UiCtxProjectOpened || uiCtx == ui::UiCtxProjectFocused;
 
-    if (noteInput->isNoteInputMode()) {
+    const INotationNoteInputPtr noteInput = notationNoteInput();
+    if (noteInput->isNoteInputMode() && isOnNotationPage) {
         if (noteInput->usingNoteInputMethod(NoteInputMethod::BY_DURATION)
             && !configuration()->useNoteInputCursorInInputByDuration()) {
             m_ruler->paint(painter, noteInput->state());
@@ -644,12 +648,12 @@ void AbstractNotationPaintView::paint(QPainter* qp)
     m_loopOutMarker->paint(painter);
 
     if (notation()->viewMode() == engraving::LayoutMode::LINE) {
-        ContinuousPanel::NotationViewContext ctx;
-        ctx.xOffset = m_matrix.dx();
-        ctx.yOffset = m_matrix.dy();
-        ctx.scaling = currentScaling();
-        ctx.fromLogical = [this](const PointF& pos) -> PointF { return fromLogical(pos); };
-        m_continuousPanel->paint(*painter, ctx);
+        ContinuousPanel::NotationViewContext nvCtx;
+        nvCtx.xOffset = m_matrix.dx();
+        nvCtx.yOffset = m_matrix.dy();
+        nvCtx.scaling = currentScaling();
+        nvCtx.fromLogical = [this](const PointF& pos) -> PointF { return fromLogical(pos); };
+        m_continuousPanel->paint(*painter, nvCtx);
     }
 }
 

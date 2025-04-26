@@ -69,6 +69,7 @@ LayoutPanelTreeModel::LayoutPanelTreeModel(QObject* parent)
         updateRearrangementAvailability();
         updateRemovingAvailability();
         updateSelectedItemsType();
+        updateIsAddingSystemMarkingsAvailable();
     });
 
     connect(this, &LayoutPanelTreeModel::rowsInserted, this, [this]() {
@@ -134,7 +135,7 @@ bool LayoutPanelTreeModel::removeRows(int row, int count, const QModelIndex& par
         parentItem = m_rootItem;
     }
 
-    if (parentItem == m_rootItem) {
+    if (parentItem == m_rootItem && needWarnOnRemoveRows(row, count)) {
         // When removing instruments, the user needs to be warned in some cases
         if (!warnAboutRemovingInstrumentsIfNecessary(count)) {
             return false;
@@ -154,6 +155,13 @@ bool LayoutPanelTreeModel::removeRows(int row, int count, const QModelIndex& par
     updateSystemObjectLayers();
 
     return true;
+}
+
+bool LayoutPanelTreeModel::shouldShowSystemObjectLayers() const
+{
+    // Only show system object staves in master score
+    // TODO: extend system object staves logic to parts
+    return m_notation && m_notation->isMaster();
 }
 
 void LayoutPanelTreeModel::initPartOrders()
@@ -233,12 +241,12 @@ void LayoutPanelTreeModel::setupPartsConnections()
     });
 }
 
-void LayoutPanelTreeModel::setupStavesConnections(const muse::ID& stavesPartId)
+void LayoutPanelTreeModel::setupStavesConnections(const muse::ID& partId)
 {
-    async::NotifyList<const Staff*> notationStaves = m_notation->parts()->staffList(stavesPartId);
+    async::NotifyList<const Staff*> notationStaves = m_notation->parts()->staffList(partId);
 
-    notationStaves.onItemChanged(m_partsNotifyReceiver.get(), [this, stavesPartId](const Staff* staff) {
-        auto partItem = m_rootItem->childAtId(stavesPartId, LayoutPanelItemType::PART);
+    notationStaves.onItemChanged(m_partsNotifyReceiver.get(), [this, partId](const Staff* staff) {
+        auto partItem = m_rootItem->childAtId(partId, LayoutPanelItemType::PART);
         if (!partItem) {
             return;
         }
@@ -251,17 +259,44 @@ void LayoutPanelTreeModel::setupStavesConnections(const muse::ID& stavesPartId)
         staffItem->init(m_masterNotation->parts()->staff(staff->id()));
     });
 
-    notationStaves.onItemAdded(m_partsNotifyReceiver.get(), [this, stavesPartId](const Staff* staff) {
-        auto partItem = m_rootItem->childAtId(stavesPartId, LayoutPanelItemType::PART);
+    notationStaves.onItemRemoved(m_partsNotifyReceiver.get(), [this, partId](const Staff* staff) {
+        auto partItem = m_rootItem->childAtId(partId, LayoutPanelItemType::PART);
         if (!partItem) {
             return;
         }
 
-        const Staff* masterStaff = m_masterNotation->parts()->staff(staff->id());
-        auto staffItem = buildMasterStaffItem(masterStaff, partItem);
+        auto staffItem = partItem->childAtId(staff->id(), LayoutPanelItemType::STAFF);
+        if (!staffItem) {
+            return;
+        }
 
         QModelIndex partIndex = index(partItem->row(), 0, QModelIndex());
-        int dstRow = partItem->childCount() - 1;
+        int staffRow = staffItem->row();
+
+        beginRemoveRows(partIndex, staffRow, staffRow);
+        partItem->removeChildren(staffRow, 1, false);
+        endRemoveRows();
+    });
+
+    notationStaves.onItemAdded(m_partsNotifyReceiver.get(), [this, partId](const Staff* staff) {
+        auto partItem = m_rootItem->childAtId(partId, LayoutPanelItemType::PART);
+        if (!partItem) {
+            return;
+        }
+
+        if (partItem->childAtId(staff->id(), LayoutPanelItemType::STAFF)) {
+            return; // this staff item already exists in the part
+        }
+
+        const Staff* masterStaff = m_masterNotation->parts()->staff(staff->id());
+        size_t staffIdx = muse::indexOf(masterStaff->part()->staves(), const_cast<Staff*>(masterStaff));
+        if (staffIdx == muse::nidx) {
+            return;
+        }
+
+        auto staffItem = buildMasterStaffItem(masterStaff, partItem);
+        QModelIndex partIndex = index(partItem->row(), 0, QModelIndex());
+        int dstRow = static_cast<int>(staffIdx);
 
         beginInsertRows(partIndex, dstRow, dstRow);
         partItem->insertChild(staffItem, dstRow);
@@ -278,6 +313,7 @@ void LayoutPanelTreeModel::setupNotationConnections()
     m_notation->undoStack()->changesChannel().onReceive(this, [this](const mu::engraving::ScoreChangesRange& changes) {
         if (!m_layoutPanelVisible) {
             m_scoreChangesCache.combine(changes);
+            m_scoreChanged = true;
             return;
         }
 
@@ -325,6 +361,8 @@ void LayoutPanelTreeModel::onScoreChanged(const mu::engraving::ScoreChangesRange
     for (AbstractLayoutPanelTreeItem* item : m_rootItem->childItems()) {
         item->onScoreChanged(changes);
     }
+
+    m_scoreChanged = false;
 }
 
 void LayoutPanelTreeModel::clear()
@@ -362,13 +400,16 @@ void LayoutPanelTreeModel::load()
     async::NotifyList<const Part*> masterParts = m_masterNotation->parts()->partList();
     sortParts(masterParts);
 
+    const bool showSystemObjectLayers = shouldShowSystemObjectLayers();
     const std::vector<Staff*>& systemObjectStaves = m_masterNotation->notation()->parts()->systemObjectStaves();
-    SystemObjectGroupsByStaff systemObjects = collectSystemObjectGroups(systemObjectStaves);
+
+    SystemObjectGroupsByStaff systemObjects;
+    if (showSystemObjectLayers) {
+        systemObjects = collectSystemObjectGroups(systemObjectStaves);
+    }
 
     for (const Part* part : masterParts) {
-        if (m_notation->isMaster()) {
-            // Only show system object staves in master score
-            // TODO: extend system object staves logic to parts
+        if (showSystemObjectLayers) {
             for (Staff* staff : part->staves()) {
                 if (muse::contains(systemObjectStaves, staff)) {
                     m_rootItem->appendChild(buildSystemObjectsLayerItem(staff, systemObjects[staff]));
@@ -386,7 +427,6 @@ void LayoutPanelTreeModel::load()
 
     emit isEmptyChanged();
     emit isAddingAvailableChanged(true);
-    emit isAddingSystemMarkingsAvailableChanged(isAddingSystemMarkingsAvailable());
 }
 
 void LayoutPanelTreeModel::sortParts(notation::PartList& parts)
@@ -451,6 +491,7 @@ void LayoutPanelTreeModel::addInstruments()
 void LayoutPanelTreeModel::addSystemMarkings()
 {
     if (const Staff* staff = resolveNewSystemObjectStaff()) {
+        m_systemStaffToSelect = staff->id();
         m_masterNotation->parts()->addSystemObjects({ staff->id() });
     }
 }
@@ -553,8 +594,8 @@ bool LayoutPanelTreeModel::moveRows(const QModelIndex& sourceParent, int sourceR
     sourceParentItem->moveChildren(sourceFirstRow, count, destinationParentItem, destinationRow, !m_dragInProgress);
     endMoveRows();
 
-    updateRearrangementAvailability();
     updateSystemObjectLayers();
+    updateRearrangementAvailability();
 
     return true;
 }
@@ -719,7 +760,7 @@ bool LayoutPanelTreeModel::isAddingAvailable() const
 
 bool LayoutPanelTreeModel::isAddingSystemMarkingsAvailable() const
 {
-    return isAddingAvailable() && m_notation->isMaster();
+    return m_isAddingSystemMarkingsAvailable;
 }
 
 bool LayoutPanelTreeModel::isEmpty() const
@@ -828,6 +869,13 @@ void LayoutPanelTreeModel::updateMovingDownAvailability(bool isSelectionMovable,
     bool hasControlItem = parentItem->type() != LayoutPanelItemType::ROOT;
     const AbstractLayoutPanelTreeItem* curItem = modelIndexToItem(lastSelectedRowIndex);
     bool lastSelectedIsSystemObjectLayer = curItem && curItem->type() == LayoutPanelItemType::ItemType::SYSTEM_OBJECTS_LAYER;
+
+    IF_ASSERT_FAILED(lastSelectedRowIndex.row() != 0 || !lastSelectedIsSystemObjectLayer) {
+        // Selecting/moving the top system object layer not allowed
+        setIsMovingDownAvailable(false);
+        return;
+    }
+
     int lastItemRowIndex = parentItem->childCount() - 1 - (hasControlItem ? 1 : 0) - (lastSelectedIsSystemObjectLayer ? 1 : 0);
 
     bool isRowInBoundaries = lastSelectedRowIndex.isValid() && lastSelectedRowIndex.row() < lastItemRowIndex;
@@ -894,6 +942,29 @@ void LayoutPanelTreeModel::updateSelectedItemsType()
     }
 }
 
+void LayoutPanelTreeModel::updateIsAddingSystemMarkingsAvailable()
+{
+    bool addingSysMarkAvailable = false;
+
+    if (!isAddingAvailable() || !m_notation->isMaster()) {
+        addingSysMarkAvailable = false;
+    } else {
+        int systemLayerCount = 0;
+        for (const AbstractLayoutPanelTreeItem* item : m_rootItem->childItems()) {
+            if (item->type() == LayoutPanelItemType::SYSTEM_OBJECTS_LAYER) {
+                ++systemLayerCount;
+            }
+        }
+
+        addingSysMarkAvailable = systemLayerCount < 0.5 * m_rootItem->childCount();
+    }
+
+    if (addingSysMarkAvailable != m_isAddingSystemMarkingsAvailable) {
+        m_isAddingSystemMarkingsAvailable = addingSysMarkAvailable;
+        emit isAddingSystemMarkingsAvailableChanged(m_isAddingSystemMarkingsAvailable);
+    }
+}
+
 void LayoutPanelTreeModel::setItemsSelected(const QModelIndexList& indexes, bool selected)
 {
     for (const QModelIndex& index : indexes) {
@@ -904,6 +975,17 @@ void LayoutPanelTreeModel::setItemsSelected(const QModelIndexList& indexes, bool
             item->setIsSelected(selected);
         }
     }
+}
+
+bool LayoutPanelTreeModel::needWarnOnRemoveRows(int row, int count)
+{
+    for (int i = row + count - 1; i >= row; --i) {
+        if (m_rootItem->childType(i) != LayoutPanelItemType::SYSTEM_OBJECTS_LAYER) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 bool LayoutPanelTreeModel::warnAboutRemovingInstrumentsIfNecessary(int count)
@@ -980,11 +1062,15 @@ AbstractLayoutPanelTreeItem* LayoutPanelTreeModel::modelIndexToItem(const QModel
 
 void LayoutPanelTreeModel::updateSystemObjectLayers()
 {
-    TRACEFUNC;
-
     if (!m_masterNotation || !m_rootItem || !m_shouldUpdateSystemObjectLayers) {
         return;
     }
+
+    if (!shouldShowSystemObjectLayers()) {
+        return;
+    }
+
+    TRACEFUNC;
 
     m_shouldUpdateSystemObjectLayers = false;
 
@@ -1052,10 +1138,16 @@ void LayoutPanelTreeModel::updateSystemObjectLayers()
             m_rootItem->insertChild(newItem, row);
             endInsertRows();
 
-            m_selectionModel->select(createIndex(row, 0, newItem));
+            if (row != 0 && m_systemStaffToSelect == staff->id()) {
+                m_selectionModel->select(createIndex(row, 0, newItem));
+                m_systemStaffToSelect = ID();
+            }
+
             break;
         }
     }
+
+    updateIsAddingSystemMarkingsAvailable();
 }
 
 const PartTreeItem* LayoutPanelTreeModel::findPartItemByStaff(const Staff* staff) const
