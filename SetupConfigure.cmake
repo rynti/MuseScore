@@ -284,6 +284,8 @@ set(QT_SUPPORT ON)
 if (MUSE_MODULE_AUDIO_JACK)
     if (NOT (OS_IS_LIN OR CC_IS_MINGW))
         set(MUSE_MODULE_AUDIO_JACK OFF)
+    else()
+        add_compile_definitions(JACK_AUDIO)
     endif()
 endif()
 

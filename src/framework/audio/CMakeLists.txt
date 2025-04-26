@@ -68,39 +68,40 @@ endif()
 
 if (MUSE_MODULE_AUDIO_JACK)
     find_package(Jack REQUIRED)
-    set(MODULE_INCLUDE_PRIVATE ${MODULE_INCLUDE_PRIVATE} ${JACK_INCLUDE_DIRS} )
-    set(MODULE_LINK ${MODULE_LINK} ${JACK_LIBRARIES} pthread )
+    set(MODULE_INCLUDE_PRIVATE ${MODULE_INCLUDE_PRIVATE} ${JACK_INCLUDE_DIRS})
+    set(MODULE_LINK ${MODULE_LINK} ${JACK_LDFLAGS} pthread)
+endif()
+
+if (OS_IS_MAC)
+    find_library(AudioToolbox NAMES AudioToolbox)
+    find_library(CoreAudio NAMES CoreAudio)
+    set(MODULE_LINK ${MODULE_LINK} ${AudioToolbox} ${CoreAudio})
+elseif (OS_IS_WIN AND (NOT (MINGW)))
+    set(MODULE_LINK ${MODULE_LINK} winmm mmdevapi mfplat)
+elseif (OS_IS_LIN)
     find_package(ALSA REQUIRED)
-    set(MODULE_INCLUDE_PRIVATE ${MODULE_INCLUDE_PRIVATE} ${ALSA_INCLUDE_DIRS} )
-    set(MODULE_LINK ${MODULE_LINK} ${ALSA_LIBRARIES} pthread )
-else ()
-    if (OS_IS_MAC)
-        find_library(AudioToolbox NAMES AudioToolbox)
-        find_library(CoreAudio NAMES CoreAudio)
-        set(MODULE_LINK ${MODULE_LINK} ${AudioToolbox} ${CoreAudio})
-    elseif (OS_IS_WIN)
-        set(MODULE_LINK ${MODULE_LINK} winmm mmdevapi mfplat
-            WindowsApp) # needed for C++/WinRT
-    elseif (OS_IS_LIN)
-        find_package(ALSA REQUIRED)
-        set(MODULE_INCLUDE_PRIVATE ${MODULE_INCLUDE_PRIVATE} ${ALSA_INCLUDE_DIRS} )
-        set(MODULE_LINK ${MODULE_LINK} ${ALSA_LIBRARIES} pthread )
-        if (MUSE_PIPEWIRE_AUDIO_DRIVER)
-            pkg_check_modules(PipeWire libpipewire-0.3)
-            if (PipeWire_FOUND)
-                message(STATUS "Found Pipewire: ${PipeWire_LIBRARIES}")
-                set(MODULE_SRC
-                    ${MODULE_SRC}
-                    ${PW_AUDIO_DRIVER_SRC}
-                )
-                set(MODULE_INCLUDE ${MODULE_INCLUDE} ${PipeWire_INCLUDE_DIRS} )
-                set(MODULE_LINK ${MODULE_LINK} ${PipeWire_LIBRARIES})
-                set(MODULE_DEF ${MODULE_DEF} -DMUSE_PIPEWIRE_AUDIO_DRIVER)
-            else()
-                message(WARNING "Pipewire development files not found.\nPipewire support is disabled from the build.")
-            endif()
+    set(MODULE_INCLUDE_PRIVATE ${MODULE_INCLUDE_PRIVATE} ${ALSA_INCLUDE_DIRS})
+    set(MODULE_LINK ${MODULE_LINK} ${ALSA_LIBRARIES} pthread)
+    if (MUSE_PIPEWIRE_AUDIO_DRIVER)
+        pkg_check_modules(PipeWire libpipewire-0.3)
+        if (PipeWire_FOUND)
+            message(STATUS "Found Pipewire: ${PipeWire_LIBRARIES}")
+            set(MODULE_SRC
+                ${MODULE_SRC}
+                ${PW_AUDIO_DRIVER_SRC}
+            )
+            set(MODULE_INCLUDE ${MODULE_INCLUDE} ${PipeWire_INCLUDE_DIRS} )
+            set(MODULE_LINK ${MODULE_LINK} ${PipeWire_LIBRARIES})
+            set(MODULE_DEF ${MODULE_DEF} -DMUSE_PIPEWIRE_AUDIO_DRIVER)
+        else()
+            message(WARNING "Pipewire development files not found.\nPipewire support is disabled from the build.")
         endif()
     endif()
+elseif (OS_IS_WIN)
+    set(MODULE_LINK ${MODULE_LINK} winmm mmdevapi mfplat
+        WindowsApp) # needed for C++/WinRT
+elseif (MINGW)
+    set(MODULE_LINK ${MODULE_LINK} winmm mmdevapi mfplat)
 endif()
 
 # Adding driver source
