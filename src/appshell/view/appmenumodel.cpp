@@ -483,10 +483,16 @@ MenuItem* AppMenuModel::makeDiagnosticsMenu()
         makeMenuItem("diagnostic-show-profiler"),
     };
 
+    MenuItemList vstItems {
+        makeMenuItem("vst-use-oldview"),
+        makeMenuItem("vst-use-newview"),
+    }; 
+ 
     MenuItemList items {
         makeMenuItem("diagnostic-save-diagnostic-files"),
         makeMenuItem("playback-reload-cache"),
-        makeMenu(TranslatableString("appshell/menu/diagnostics", "&System"), systemItems, "menu-system")
+        makeMenu(TranslatableString("appshell/menu/diagnostics", "&System"), systemItems, "menu-system"),
+        makeMenu(TranslatableString("appshell/menu/diagnostics", "&VST"), vstItems, "menu-vst")      
     };
 
     if (isMuseSamplerModuleAdded()) {
