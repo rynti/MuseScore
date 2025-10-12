@@ -58,6 +58,8 @@ class AudioMidiPreferencesModel : public QObject, public muse::Injectable, publi
     Q_PROPERTY(
         int onlineSoundsShowProgressBarMode READ onlineSoundsShowProgressBarMode WRITE setOnlineSoundsShowProgressBarMode NOTIFY onlineSoundsShowProgressBarModeChanged)
 
+    Q_PROPERTY(bool jackTransportEnable READ jackTransportEnable WRITE setJackTransportEnable NOTIFY jackTransportEnableChanged)
+
     muse::Inject<muse::audio::IAudioConfiguration> audioConfiguration = { this };
     muse::Inject<muse::audio::IAudioDriverController> audioDriverController = { this };
     muse::Inject<muse::midi::IMidiConfiguration> midiConfiguration = { this };
@@ -96,6 +98,8 @@ public:
     bool autoProcessOnlineSoundsInBackground() const;
     int onlineSoundsShowProgressBarMode() const;
 
+    bool jackTransportEnable() const;
+
 public slots:
     void setCurrentAudioApiIndex(int index);
 
@@ -106,6 +110,8 @@ public slots:
     void setShouldShowOnlineSoundsProcessingError(bool value);
     void setAutoProcessOnlineSoundsInBackground(bool value);
     void setOnlineSoundsShowProgressBarMode(int mode);
+
+    void setJackTransportEnable(bool enable);
 
 signals:
     void currentAudioApiIndexChanged(int index);
@@ -122,6 +128,8 @@ signals:
     void shouldShowOnlineSoundsProcessingErrorChanged();
     void autoProcessOnlineSoundsInBackgroundChanged();
     void onlineSoundsShowProgressBarModeChanged();
+
+    void jackTransportEnableChanged(bool enable);
 
 private:
     muse::midi::MidiDeviceID midiInputDeviceId(int index) const;

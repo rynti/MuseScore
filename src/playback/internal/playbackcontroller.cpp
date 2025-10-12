@@ -148,6 +148,24 @@ void PlaybackController::init()
     });
 
     m_measureInputLag = configuration()->shouldMeasureInputLag();
+
+    m_remoteSeek.onReceive(this, [this](const muse::audio::msecs_t msecs) {
+        seek(msecs / 1000L); //FIX: dont do scaling here
+    });
+
+    m_remotePlayOrStop.onReceive(this, [this](const bool playOrStop) {
+        if (playOrStop) {
+            if (isPlaying()) {
+                resume();
+            } else {
+                play();
+            }
+        } else {
+            if (isPlaying()) {
+                pause();
+            }
+        }
+    });
 }
 
 void PlaybackController::updateCurrentTempo()
@@ -238,6 +256,25 @@ void PlaybackController::seek(const audio::secs_t secs, const bool flushSound)
     }
 
     currentPlayer()->seek(secs, flushSound);
+}
+
+void PlaybackController::remoteSeek(const msecs_t msecs)
+{
+    if (!currentPlayer() || !playback()) {
+        return;
+    }
+    IF_ASSERT_FAILED(playback()) {
+        return;
+    }
+    m_remoteSeek.send(msecs);
+}
+
+void PlaybackController::remotePlayOrStop(const bool playOrStop)
+{
+    if (!isPlayAllowed()) {
+        return;
+    }
+    m_remotePlayOrStop.send(playOrStop);
 }
 
 muse::async::Channel<secs_t, tick_t> PlaybackController::currentPlaybackPositionChanged() const

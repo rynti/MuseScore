@@ -115,6 +115,10 @@ void AudioMidiPreferencesModel::init()
     audioConfiguration()->autoProcessOnlineSoundsInBackgroundChanged().onReceive(this, [this](bool) {
         emit autoProcessOnlineSoundsInBackgroundChanged();
     });
+
+    playbackConfiguration()->jackTransportEnableChanged().onReceive(this, [this](bool mute) {
+        emit jackTransportEnableChanged(mute);
+    });
 }
 
 QStringList AudioMidiPreferencesModel::audioApiList() const
@@ -262,4 +266,18 @@ void AudioMidiPreferencesModel::setOnlineSoundsShowProgressBarMode(int mode)
     }
 
     playbackConfiguration()->setOnlineSoundsShowProgressBarMode(static_cast<playback::OnlineSoundsShowProgressBarMode>(mode));
+}
+
+bool AudioMidiPreferencesModel::jackTransportEnable() const
+{
+    return playbackConfiguration()->jackTransportEnable();
+}
+
+void AudioMidiPreferencesModel::setJackTransportEnable(bool enable)
+{
+    if (enable == jackTransportEnable()) {
+        return;
+    }
+
+    playbackConfiguration()->setJackTransportEnable(enable);
 }
