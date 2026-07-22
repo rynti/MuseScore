@@ -72,9 +72,9 @@ desktop build:
    MuseScore. MuseScore prepares/seeks before declaring itself ready to JACK and
    begins from the shared position.
 7. **MuseScore control:** while synchronization is **Effective**, MuseScore's
-   own Play, Pause, Pause-and-select, Stop, toolbar seek/rewind, and
-   play-from-selection actions request the corresponding change from JACK.
-   Ardour and other clients observe it.
+   own Play, Pause, Pause-and-select, Stop, toolbar seek/rewind, user-initiated
+   notation/Timeline/beat seeks, and play-from-selection actions request the
+   corresponding change from JACK. Ardour and other clients observe it.
 8. **No command echo:** applying a JACK-originated event locally must not send
    the same command back to JACK. Explicit user actions (including shortcuts,
    MIDI remote, and scripts that dispatch the public playback actions) count as
@@ -107,7 +107,7 @@ is not yet effective and keeps the ordinary local controls.
 | MuseScore Play | Start/resume locally | Start/resume locally | Locate JACK to MuseScore's cursor when needed, then start JACK |
 | MuseScore Pause | Pause locally | Pause locally | Stop JACK and keep the shared position |
 | MuseScore Stop | Use existing local semantics | Use existing local semantics | Stop JACK, locate it to frame 0, then put MuseScore at 0 |
-| MuseScore toolbar seek/rewind | Seek locally | Seek locally | Call `jack_transport_locate()`; reapply the position when JACK reports it |
+| MuseScore user seek/rewind | Seek locally | Seek locally | Call `jack_transport_locate()`; reapply the position when JACK reports it |
 | JACK/Ardour start | No effect | Before the fresh Stopped arm, do not join; after it, prepare this start to finish activation | Prepare/seek MuseScore, acknowledge JACK slow sync, then run |
 | JACK/Ardour stop | No effect | Converge at the fresh Stopped frame and become Effective | Pause MuseScore at the observed position (do not rewind) |
 | JACK/Ardour locate | No effect | A stopped locate can arm/converge; an already-rolling position is not joined, but the next Starting after arming can finish activation | Seek MuseScore; if rolling, prepare before JACK resumes |
@@ -135,12 +135,14 @@ Additional decisions:
   score/player replacement.
 - Route outbound commands only at explicit user-command boundaries. The
   dispatcher Play, Play-from-selection, Pause, Pause-and-select, Stop, and
-  Rewind/toolbar-seek actions are outbound. Incidental selection changes,
-  score/part replacement, natural EOF, tempo refresh, and other internal calls
-  remain local; changing the score cursor may update the desired start
-  position, and the next explicit Play locates JACK there. Do not infer origin
-  merely because an internal helper named `pause()`, `stop()`, or `seek()` was
-  called.
+  Rewind/toolbar-seek actions are outbound, as are user-initiated notation,
+  Timeline, and keyboard beat/selection seeks that already move playback.
+  Incidental selection changes, MIDI note-entry positioning, score/part
+  replacement, natural EOF, tempo refresh, and other internal calls remain
+  local; changing the score cursor may update the desired start position, and
+  the next explicit Play locates JACK there. Pass user/internal seek origin
+  explicitly; do not infer it merely because an internal helper is named
+  `pause()`, `stop()`, or `seek()`.
 - While Effective, disable loop and count-in controls with a short explanation.
   On entry, turn off any active engine loop without erasing its saved
   boundaries; on exit, restore the UI state through the existing `updateLoop()`
@@ -680,8 +682,9 @@ applications agree on position without a public-action echo.
 
 ### Phase 3 — MuseScore controls the shared transport
 
-- Route explicit Play/Pause/Pause-and-select/Stop/toolbar-seek/
-  play-from-selection through the transport controller when it handles them.
+- Route explicit Play/Pause/Pause-and-select/Stop/toolbar-seek,
+  notation/Timeline/keyboard seek, and play-from-selection through the
+  transport controller when it handles them.
 - Split those registered user adapters from local-only helpers used by EOF,
   reset, score/part changes, tempo maintenance, and external observations.
 - Maintain the desired cursor synchronously and preserve ordered seeks,
@@ -794,7 +797,7 @@ attacks and Ardour as the visible transport peer.
 | Effective sync, Ardour stop and stopped locate | MuseScore pauses and moves without rewinding unexpectedly |
 | Effective sync, Ardour locate while rolling | JACK waits for preparation and MuseScore resumes at the new position |
 | Effective sync, MuseScore Play at 0/nonzero cursor | Ardour starts at the same position |
-| Effective sync, MuseScore Pause/Pause-and-select, Stop, seek, play-from-selection | Ardour observes the specified shared-transport semantics |
+| Effective sync, MuseScore Pause/Pause-and-select, Stop, toolbar/notation/Timeline/keyboard seek, play-from-selection | Ardour observes the specified shared-transport semantics while stopped and rolling |
 | Effective loop/count-in/speed controls | Loop is locally disarmed/restored; count-in is suppressed; speed changes are rejected with a hint |
 | Effective sync, JACK stopped, edit/audition notes | Audition remains audible without starting the shared transport |
 | Score reaches natural end while Ardour rolls | MuseScore becomes silent; Ardour keeps rolling |
@@ -849,6 +852,8 @@ qualification; they do not imply unfinished implementation code.
 - [x] Ardour-originated locate/start/stop/rolling-locate work.
 - [x] MuseScore-originated Play/Pause/Pause-and-select/Stop/toolbar-seek/
       play-from-selection work.
+- [ ] MuseScore-originated notation, Timeline, and keyboard beat/selection
+      seeks relocate Ardour while stopped and rolling.
 - [x] External events cannot echo through the outbound user-action path.
 - [x] Internal reset/EOF/content-maintenance calls cannot control JACK.
 - [x] Preparation delivery, generation identity, ordered seeks, and render

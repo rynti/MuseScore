@@ -270,6 +270,17 @@ void PlaybackController::seek(const audio::secs_t secs, const bool flushSound)
     currentPlayer()->seek(position, flushSound);
 }
 
+void PlaybackController::seekFromUserAction(const audio::secs_t secs, const bool flushSound)
+{
+    const secs_t position = clampPlaybackPosition(secs);
+    clearPendingUserTransportAction();
+    setDesiredPlaybackPosition(position);
+
+    if (!audioDriverController()->requestTransportSeek(position)) {
+        seek(position, flushSound);
+    }
+}
+
 secs_t PlaybackController::clampPlaybackPosition(const secs_t secs) const
 {
     return std::clamp(secs, secs_t { 0.0 }, totalPlayTime());
@@ -441,7 +452,7 @@ void PlaybackController::triggerControllers(const muse::mpe::ControllerChangeEve
     notationPlayback()->triggerControllers(list, staffIdx, tick);
 }
 
-void PlaybackController::seekElement(const notation::EngravingItem* element, bool flushSound)
+void PlaybackController::seekElement(const notation::EngravingItem* element, SeekOrigin origin, bool flushSound)
 {
     IF_ASSERT_FAILED(notationPlayback()) {
         return;
@@ -456,13 +467,22 @@ void PlaybackController::seekElement(const notation::EngravingItem* element, boo
         return;
     }
 
-    seek(playedTickToSecs(tick.val), flushSound);
+    const secs_t position = playedTickToSecs(tick.val);
+    if (origin == SeekOrigin::User) {
+        seekFromUserAction(position, flushSound);
+    } else {
+        seek(position, flushSound);
+    }
 }
 
-void PlaybackController::seekBeat(int measureIndex, int beatIndex, bool flushSound)
+void PlaybackController::seekBeat(int measureIndex, int beatIndex, SeekOrigin origin, bool flushSound)
 {
     secs_t targetSecs = beatToSecs(measureIndex, beatIndex);
-    seek(targetSecs, flushSound);
+    if (origin == SeekOrigin::User) {
+        seekFromUserAction(targetSecs, flushSound);
+    } else {
+        seek(targetSecs, flushSound);
+    }
 }
 
 void PlaybackController::seekRangeSelection()
@@ -770,11 +790,7 @@ void PlaybackController::rewind(const ActionData& args)
     secs_t newPosition = !args.empty() ? args.arg<secs_t>(0) : secs_t{ 0 };
     newPosition = std::clamp(newPosition, startSecs, endSecs);
 
-    clearPendingUserTransportAction();
-    setDesiredPlaybackPosition(newPosition);
-    if (!audioDriverController()->requestTransportSeek(newPosition)) {
-        seek(newPosition);
-    }
+    seekFromUserAction(newPosition);
 }
 
 void PlaybackController::pause(bool select)
