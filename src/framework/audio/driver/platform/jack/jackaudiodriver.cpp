@@ -48,6 +48,13 @@ constexpr uint32_t STATUS_BUFFER_SIZE_CHANGED = 1U << 2;
 constexpr uint32_t STATUS_BUFFER_SIZE_TOO_LARGE = 1U << 3;
 constexpr uint32_t STATUS_XRUN = 1U << 4;
 
+constexpr bool isTransportStarting(jack_transport_state_t state) noexcept
+{
+    // JackTransportNetStarting is a JACK2/NetJack extension that is absent
+    // from JACK1 headers, including those used by Linux CI.
+    return state == JackTransportStarting;
+}
+
 static_assert(std::atomic<bool>::is_always_lock_free);
 static_assert(std::atomic<jack_nframes_t>::is_always_lock_free);
 static_assert(std::atomic<uint32_t>::is_always_lock_free);
@@ -665,7 +672,7 @@ int JackAudioDriver::syncTransport(jack_transport_state_t state, const jack_posi
         return 1;
     }
 
-    const bool starting = state == JackTransportStarting || state == JackTransportNetStarting;
+    const bool starting = isTransportStarting(state);
     const bool rolling = state == JackTransportRolling || state == JackTransportLooping;
 
     if (state == JackTransportStopped) {
@@ -767,7 +774,7 @@ int JackAudioDriver::syncTransport(jack_transport_state_t state, const jack_posi
 void JackAudioDriver::observeTransport(jack_transport_state_t state, const jack_position_t& position,
                                        bool authoritative) noexcept
 {
-    const bool starting = state == JackTransportStarting || state == JackTransportNetStarting;
+    const bool starting = isTransportStarting(state);
     const bool rolling = state == JackTransportRolling || state == JackTransportLooping;
 
     if (state == JackTransportStopped) {
@@ -857,7 +864,7 @@ int JackAudioDriver::process(jack_nframes_t nframes) noexcept
             observeTransport(state, position, false);
 
             if (m_transportCallbackArmed.load(std::memory_order_acquire)) {
-                const bool starting = state == JackTransportStarting || state == JackTransportNetStarting;
+                const bool starting = isTransportStarting(state);
                 if (starting) {
                     return 0;
                 }
