@@ -44,6 +44,7 @@ PreferencesPage {
         AudioApiSection {
             currentAudioApiIndex: audioMidiModel.currentAudioApiIndex
             audioApiList: audioMidiModel.audioApiList()
+            audioApiSelectionEnabled: audioMidiModel.audioApiSelectionEnabled
 
             navigation.section: root.navigationSection
             navigation.order: root.navigationOrderStart + 1
