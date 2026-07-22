@@ -18,7 +18,14 @@ option(MUSE_MODULE_ACCESSIBILITY_TRACE "Enable accessibility logging" OFF)
 declare_muse_module_opt(ACTIONS ON)
 
 declare_muse_module_opt(AUDIO ON)
-option(MUSE_MODULE_AUDIO_JACK "Enable jack support" OFF)
+
+if (OS_IS_LIN)
+    option(MUSE_MODULE_AUDIO_JACK "Enable JACK audio support" OFF)
+else()
+    # Keep a stale command-line/cache value from leaking JACK into shared
+    # headers on unsupported platforms.
+    set(MUSE_MODULE_AUDIO_JACK OFF)
+endif()
 
 if (OS_IS_WIN)
     option(MUSE_MODULE_AUDIO_ASIO "Enable asio support" ON)

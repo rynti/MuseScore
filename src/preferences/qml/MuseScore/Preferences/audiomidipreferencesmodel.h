@@ -25,6 +25,8 @@
 
 #include <QObject>
 
+#include "muse_framework_config.h"
+
 #include "modularity/ioc.h"
 #include "async/asyncable.h"
 
@@ -36,6 +38,10 @@
 #include "playback/iplaybackconfiguration.h"
 #include "global/iinteractive.h"
 
+#if defined(MUSE_MODULE_AUDIO_JACK) && defined(Q_OS_LINUX)
+#include "context/iglobalcontext.h"
+#endif
+
 namespace mu::preferences {
 class AudioMidiPreferencesModel : public QObject, public muse::Contextable, public muse::async::Asyncable
 {
@@ -43,6 +49,7 @@ class AudioMidiPreferencesModel : public QObject, public muse::Contextable, publ
     QML_ELEMENT;
 
     Q_PROPERTY(int currentAudioApiIndex READ currentAudioApiIndex WRITE setCurrentAudioApiIndex NOTIFY currentAudioApiIndexChanged)
+    Q_PROPERTY(bool audioApiSelectionEnabled READ audioApiSelectionEnabled NOTIFY audioApiSelectionEnabledChanged)
 
     Q_PROPERTY(QVariantList midiInputDevices READ midiInputDevices NOTIFY midiInputDevicesChanged)
     Q_PROPERTY(QString midiInputDeviceId READ midiInputDeviceId NOTIFY midiInputDeviceIdChanged)
@@ -71,6 +78,9 @@ class AudioMidiPreferencesModel : public QObject, public muse::Contextable, publ
     muse::ContextInject<muse::midi::IMidiOutPort> midiOutPort = { this };
     muse::ContextInject<muse::midi::IMidiInPort> midiInPort = { this };
     muse::ContextInject<muse::IInteractive> interactive = { this };
+#if defined(MUSE_MODULE_AUDIO_JACK) && defined(Q_OS_LINUX)
+    muse::ContextInject<mu::context::IGlobalContext> globalContext = { this };
+#endif
 
 public:
     explicit AudioMidiPreferencesModel(QObject* parent = nullptr);
@@ -78,6 +88,7 @@ public:
     Q_INVOKABLE void init();
 
     int currentAudioApiIndex() const;
+    bool audioApiSelectionEnabled() const;
 
     QString midiInputDeviceId() const;
     Q_INVOKABLE void inputDeviceSelected(const QString& deviceId);
@@ -118,6 +129,7 @@ public slots:
 
 signals:
     void currentAudioApiIndexChanged(int index);
+    void audioApiSelectionEnabledChanged();
     void midiInputDeviceIdChanged();
     void midiOutputDeviceIdChanged();
 
@@ -134,9 +146,14 @@ signals:
     void useSoundFontLowPassFilterChanged();
 
 private:
+    void reconcilePreferredAudioApi();
+    void showAudioApiSwitchError(const std::string& requestedApi) const;
+
     muse::midi::MidiDeviceID midiInputDeviceId(int index) const;
     muse::midi::MidiDeviceID midiOutputDeviceId(int index) const;
 
     void showMidiError(const muse::midi::MidiDeviceID& deviceId, const std::string& text) const;
+
+    bool m_reconcilingAudioApi = false;
 };
 }
