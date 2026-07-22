@@ -163,6 +163,16 @@ void PlaybackController::init()
         notifyActionCheckedChanged(TOGGLE_HEAR_PLAYBACK_WHEN_EDITING_CODE);
     });
 
+    audioDriverController()->transportEvent().onReceive(this, [this](const AudioDriverTransportEvent& event) {
+        onTransportEvent(event);
+    });
+
+    audioDriverController()->transportSyncStateChanged().onNotify(this, [this]() {
+        onTransportSyncStateChanged();
+    });
+
+    m_lastTransportSyncState = audioDriverController()->transportSyncState();
+
     m_measureInputLag = configuration()->shouldMeasureInputLag();
 }
 
@@ -231,7 +241,8 @@ Notification PlaybackController::isPlayingChanged() const
 
 void PlaybackController::reset()
 {
-    stop();
+    cancelTransportPlaybackWork();
+    stopLocal();
 }
 
 void PlaybackController::seekRawTick(const midi::tick_t tick, const bool flushSound)
@@ -254,7 +265,24 @@ void PlaybackController::seek(const audio::secs_t secs, const bool flushSound)
         return;
     }
 
-    currentPlayer()->seek(secs, flushSound);
+    const secs_t position = clampPlaybackPosition(secs);
+    setDesiredPlaybackPosition(position);
+    currentPlayer()->seek(position, flushSound);
+}
+
+secs_t PlaybackController::clampPlaybackPosition(const secs_t secs) const
+{
+    return std::clamp(secs, secs_t { 0.0 }, totalPlayTime());
+}
+
+void PlaybackController::setDesiredPlaybackPosition(const secs_t secs, bool pendingSeek)
+{
+    m_desiredPlaybackPosition = clampPlaybackPosition(secs);
+    if (pendingSeek) {
+        m_pendingDesiredPlaybackPosition = m_desiredPlaybackPosition;
+    } else {
+        m_pendingDesiredPlaybackPosition.reset();
+    }
 }
 
 muse::async::Channel<secs_t, tick_t> PlaybackController::currentPlaybackPositionChanged() const
@@ -563,7 +591,7 @@ void PlaybackController::onNotationChanged()
 void PlaybackController::onPartChanged(const Part* part)
 {
     if (!m_notation->hasVisibleParts()) {
-        pause();
+        pauseLocal();
     }
     m_isPlayAllowedChanged.notify();
 
@@ -624,6 +652,7 @@ void PlaybackController::togglePlay(bool showErrors)
     }
 
     interaction()->endEditElement();
+    clearPendingUserTransportAction();
 
     if (isPlaying()) {
         pause();
@@ -631,19 +660,26 @@ void PlaybackController::togglePlay(bool showErrors)
         notationPlayback()->sendEventsForChangedTracks();
 
         if (currentPlayer()) {
-            secs_t pos = currentPlayer()->playbackPosition();
+            secs_t pos = m_desiredPlaybackPosition;
             secs_t endSecs = totalPlayTime();
             if (pos == endSecs) {
                 secs_t startSecs = playbackStartSecs();
-                seek(startSecs);
+                setDesiredPlaybackPosition(startSecs);
             }
 
-            resume();
+            if (!audioDriverController()->requestTransportPlay(m_desiredPlaybackPosition)) {
+                if (pos == endSecs) {
+                    seek(m_desiredPlaybackPosition);
+                }
+                resume();
+            }
         }
     } else {
         notationPlayback()->sendEventsForChangedTracks();
 
-        play();
+        if (!audioDriverController()->requestTransportPlay(m_desiredPlaybackPosition)) {
+            play();
+        }
     }
 }
 
@@ -669,7 +705,7 @@ void PlaybackController::playFromSelection(bool showErrors)
     }
 
     const LoopBoundaries& loop = notationPlayback()->loopBoundaries();
-    if (loop.enabled) {
+    if (!isTransportSyncEffective() && loop.enabled) {
         if (startTick < loop.loopInTick.ticks() || startTick > loop.loopOutTick.ticks()) {
             startTick = loop.loopInTick.ticks();
         }
@@ -680,7 +716,15 @@ void PlaybackController::playFromSelection(bool showErrors)
         return;
     }
 
-    seek(playedTickToSecs(retval.val));
+    clearPendingUserTransportAction();
+    const secs_t position = clampPlaybackPosition(playedTickToSecs(retval.val));
+    setDesiredPlaybackPosition(position);
+
+    if (audioDriverController()->requestTransportPlay(position)) {
+        return;
+    }
+
+    seek(position);
 
     if (isPaused()) {
         resume();
@@ -710,10 +754,11 @@ void PlaybackController::play()
         }
 
         secs_t delay = 0.;
-        if (notationConfiguration()->isCountInEnabled()) {
+        if (!isTransportSyncEffective() && notationConfiguration()->isCountInEnabled()) {
             notationPlayback()->triggerCountIn(m_currentTick, delay);
         }
 
+        m_pendingDesiredPlaybackPosition.reset();
         currentPlayer()->play(delay);
     });
 }
@@ -725,7 +770,11 @@ void PlaybackController::rewind(const ActionData& args)
     secs_t newPosition = !args.empty() ? args.arg<secs_t>(0) : secs_t{ 0 };
     newPosition = std::clamp(newPosition, startSecs, endSecs);
 
-    seek(newPosition);
+    clearPendingUserTransportAction();
+    setDesiredPlaybackPosition(newPosition);
+    if (!audioDriverController()->requestTransportSeek(newPosition)) {
+        seek(newPosition);
+    }
 }
 
 void PlaybackController::pause(bool select)
@@ -734,7 +783,20 @@ void PlaybackController::pause(bool select)
         return;
     }
 
-    if (isPaused()) {
+    clearPendingUserTransportAction();
+    m_pauseAndSelectPending = select;
+
+    if (audioDriverController()->requestTransportPause()) {
+        return;
+    }
+
+    m_pauseAndSelectPending = false;
+    pauseLocal(select);
+}
+
+void PlaybackController::pauseLocal(bool select)
+{
+    if (!currentPlayer()) {
         return;
     }
 
@@ -752,6 +814,21 @@ void PlaybackController::stop()
         return;
     }
 
+    clearPendingUserTransportAction();
+    if (audioDriverController()->requestTransportStop()) {
+        return;
+    }
+
+    stopLocal();
+}
+
+void PlaybackController::stopLocal()
+{
+    if (!currentPlayer()) {
+        return;
+    }
+
+    setDesiredPlaybackPosition(0.0);
     currentPlayer()->stop();
 }
 
@@ -771,12 +848,274 @@ void PlaybackController::resume()
         }
 
         secs_t delay = 0.;
-        if (notationConfiguration()->isCountInEnabled()) {
+        if (!isTransportSyncEffective() && notationConfiguration()->isCountInEnabled()) {
             notationPlayback()->triggerCountIn(m_currentTick, delay);
         }
 
+        m_pendingDesiredPlaybackPosition.reset();
         currentPlayer()->resume(delay);
     });
+}
+
+bool PlaybackController::isTransportSyncEffective() const
+{
+    return audioDriverController()->transportSyncState() == AudioDriverTransportSyncState::Effective;
+}
+
+void PlaybackController::onTransportSyncStateChanged()
+{
+    const AudioDriverTransportSyncState state = audioDriverController()->transportSyncState();
+    const bool wasEffective = m_lastTransportSyncState == AudioDriverTransportSyncState::Effective;
+    const bool isEffective = state == AudioDriverTransportSyncState::Effective;
+    m_lastTransportSyncState = state;
+
+    if (isEffective && !wasEffective) {
+        if (currentPlayer()) {
+            currentPlayer()->resetLoop();
+        }
+    }
+
+    if (wasEffective && !isEffective) {
+        cancelTransportPreparation(true);
+        clearPendingUserTransportAction();
+        m_pendingDesiredPlaybackPosition.reset();
+        updateLoop();
+    }
+
+    if (state == AudioDriverTransportSyncState::Off) {
+        cancelTransportPreparation(true);
+        clearPendingUserTransportAction();
+    } else if (state == AudioDriverTransportSyncState::Unavailable) {
+        cancelTransportPreparation(true);
+        clearPendingUserTransportAction();
+    }
+}
+
+void PlaybackController::onTransportEvent(const AudioDriverTransportEvent& event)
+{
+    switch (event.type) {
+    case AudioDriverTransportEventType::Prepare:
+        prepareForTransport(event);
+        break;
+    case AudioDriverTransportEventType::Stopped:
+        cancelTransportPreparation(true);
+        applyTransportStopped(event.position);
+        break;
+    case AudioDriverTransportEventType::Locate:
+        cancelTransportPreparation(true);
+        applyTransportLocate(event.position);
+        break;
+    case AudioDriverTransportEventType::Stop:
+        cancelTransportPreparation(true);
+        applyTransportStop();
+        break;
+    case AudioDriverTransportEventType::RollingUnprepared:
+        cancelTransportPreparation(true);
+        clearPendingUserTransportAction();
+        pauseLocal();
+        if (!event.message.empty()) {
+            LOGW() << "JACK transport: " << event.message;
+        }
+        break;
+    case AudioDriverTransportEventType::Unavailable:
+        cancelTransportPreparation(true);
+        clearPendingUserTransportAction();
+        stopLocal();
+        break;
+    case AudioDriverTransportEventType::Error:
+        cancelTransportPreparation(true);
+        clearPendingUserTransportAction();
+        m_pendingDesiredPlaybackPosition.reset();
+        if (!event.message.empty()) {
+            LOGE() << "JACK transport: " << event.message;
+        }
+        break;
+    case AudioDriverTransportEventType::Unknown:
+        break;
+    }
+}
+
+void PlaybackController::applyTransportStopped(const secs_t position)
+{
+    if (!currentPlayer()) {
+        clearPendingUserTransportAction();
+        return;
+    }
+
+    const secs_t clampedPosition = clampPlaybackPosition(position);
+    pauseLocal();
+    seek(clampedPosition);
+
+    if (m_pauseAndSelectPending) {
+        m_pauseAndSelectPending = false;
+        selectAtPlaybackPosition(clampedPosition);
+    }
+}
+
+void PlaybackController::applyTransportLocate(const secs_t position)
+{
+    clearPendingUserTransportAction();
+    if (!currentPlayer()) {
+        return;
+    }
+
+    pauseLocal();
+    seek(clampPlaybackPosition(position));
+}
+
+void PlaybackController::applyTransportStop()
+{
+    clearPendingUserTransportAction();
+    stopLocal();
+}
+
+void PlaybackController::selectAtPlaybackPosition(const secs_t position)
+{
+    if (!m_notation || !notationPlayback() || !interaction()) {
+        return;
+    }
+
+    const tick_t tick = notationPlayback()->secToTick(position);
+    interaction()->findAndSelectChordRest(Fraction::fromTicks(tick));
+}
+
+void PlaybackController::prepareForTransport(const AudioDriverTransportEvent& event)
+{
+    cancelTransportPreparation(true);
+    clearPendingUserTransportAction();
+
+    const IPlayerPtr player = currentPlayer();
+    if (!player || !m_notation || !notationPlayback()) {
+        audioDriverController()->completeTransportPreparation(event.driverGeneration, event.token, false);
+        return;
+    }
+
+    TransportPreparationContext context;
+    context.serial = ++m_transportPreparationSerial;
+    context.driverGeneration = event.driverGeneration;
+    context.token = event.token;
+    context.sequenceId = m_currentSequenceId;
+    context.player = player;
+    context.notation = m_notation;
+    context.wasStopped = player->playbackStatus() == PlaybackStatus::Stopped;
+    m_transportPreparation = context;
+
+    const secs_t position = clampPlaybackPosition(event.position);
+    setDesiredPlaybackPosition(position);
+
+    // These RPC requests are deliberately ordered before PrepareToPlay. Its
+    // response is the fence which tells us that pause and seek were applied.
+    player->pause();
+    player->seek(position);
+
+    m_transportPrepareReceiver.async_disconnectAll();
+    Promise<Ret> preparation = player->prepareToPlay();
+    preparation.onResolve(&m_transportPrepareReceiver, [this, context](const Ret& ret) {
+        if (!ret || !isTransportPreparationCurrent(context)) {
+            finishTransportPreparation(context, false);
+            return;
+        }
+
+        if (!audioDriverController()->activateTransportForPreparation(context.driverGeneration, context.token)
+            || !isTransportPreparationCurrent(context)) {
+            finishTransportPreparation(context, false);
+            return;
+        }
+
+        m_transportStatusReceiver.async_disconnectAll();
+        context.player->playbackStatusChanged().onReceive(&m_transportStatusReceiver, [this, context](PlaybackStatus status) {
+            if (status != PlaybackStatus::Running) {
+                return;
+            }
+
+            if (!isTransportPreparationCurrent(context)) {
+                finishTransportPreparation(context, false);
+                return;
+            }
+
+            m_pendingDesiredPlaybackPosition.reset();
+            finishTransportPreparation(context, true);
+        });
+
+        if (!isTransportPreparationCurrent(context)) {
+            finishTransportPreparation(context, false);
+            return;
+        }
+
+        // Synchronized playback never uses MuseScore's independent count-in.
+        if (context.wasStopped) {
+            context.player->play(0.0);
+        } else {
+            context.player->resume(0.0);
+        }
+    });
+    preparation.onReject(&m_transportPrepareReceiver, [this, context](int, const std::string&) {
+        finishTransportPreparation(context, false);
+    });
+}
+
+bool PlaybackController::isTransportPreparationCurrent(const TransportPreparationContext& context) const
+{
+    return m_transportPreparation.has_value()
+           && m_transportPreparation->serial == context.serial
+           && m_transportPreparation->driverGeneration == context.driverGeneration
+           && m_transportPreparation->token == context.token
+           && m_currentSequenceId == context.sequenceId
+           && currentPlayer() == context.player
+           && m_notation == context.notation
+           && audioDriverController()->isTransportPreparationCurrent(context.driverGeneration, context.token);
+}
+
+void PlaybackController::finishTransportPreparation(const TransportPreparationContext& context, bool success)
+{
+    const bool isCurrent = m_transportPreparation.has_value() && m_transportPreparation->serial == context.serial;
+    const bool completed = success && isCurrent && isTransportPreparationCurrent(context);
+
+    if (!completed && context.player) {
+        context.player->pause();
+    }
+
+    audioDriverController()->completeTransportPreparation(context.driverGeneration, context.token, completed);
+
+    if (isCurrent) {
+        m_transportPrepareReceiver.async_disconnectAll();
+        m_transportStatusReceiver.async_disconnectAll();
+        m_transportPreparation.reset();
+    }
+}
+
+void PlaybackController::cancelTransportPreparation(bool notifyController)
+{
+    ++m_transportPreparationSerial;
+    m_transportPrepareReceiver.async_disconnectAll();
+    m_transportStatusReceiver.async_disconnectAll();
+
+    if (!m_transportPreparation.has_value()) {
+        return;
+    }
+
+    const TransportPreparationContext context = *m_transportPreparation;
+    m_transportPreparation.reset();
+    if (context.player) {
+        context.player->pause();
+    }
+
+    if (notifyController) {
+        audioDriverController()->completeTransportPreparation(context.driverGeneration, context.token, false);
+    }
+}
+
+void PlaybackController::cancelTransportPlaybackWork()
+{
+    cancelTransportPreparation(true);
+    clearPendingUserTransportAction();
+    m_pendingDesiredPlaybackPosition.reset();
+    audioDriverController()->cancelPendingTransportWork();
+}
+
+void PlaybackController::clearPendingUserTransportAction()
+{
+    m_pauseAndSelectPending = false;
 }
 
 void PlaybackController::onPlaybackStatusChanged()
@@ -801,7 +1140,7 @@ secs_t PlaybackController::playbackStartSecs() const
     }
 
     const LoopBoundaries& loop = notationPlayback()->loopBoundaries();
-    if (loop.enabled) {
+    if (!isTransportSyncEffective() && loop.enabled) {
         // Convert from raw ticks (visual tick != playback tick due to repeats etc)
         RetVal<tick_t> startTick = notationPlayback()->playPositionTickByRawTick(loop.loopInTick.ticks());
         if (!startTick.ret) {
@@ -880,6 +1219,10 @@ void PlaybackController::toggleMetronome()
 
 void PlaybackController::toggleCountIn()
 {
+    if (isTransportSyncEffective()) {
+        return;
+    }
+
     bool metronomeEnabled = notationConfiguration()->isMetronomeEnabled();
     bool countInEnabled = notationConfiguration()->isCountInEnabled();
 
@@ -904,6 +1247,10 @@ void PlaybackController::setMidiUseWrittenPitch(bool useWrittenPitch)
 
 void PlaybackController::toggleLoopPlayback()
 {
+    if (isTransportSyncEffective()) {
+        return;
+    }
+
     if (isLoopEnabled()) {
         disableLoop();
         return;
@@ -955,6 +1302,10 @@ void PlaybackController::openPlaybackSetupDialog()
 
 void PlaybackController::addLoopBoundary(LoopBoundaryType type)
 {
+    if (isTransportSyncEffective()) {
+        return;
+    }
+
     if (isPlaying()) {
         addLoopBoundaryToTick(type, m_currentTick);
     } else {
@@ -973,6 +1324,12 @@ void PlaybackController::addLoopBoundaryToTick(LoopBoundaryType type, int tick)
 void PlaybackController::updateLoop()
 {
     if (!notationPlayback() || !currentPlayer()) {
+        return;
+    }
+
+    if (isTransportSyncEffective()) {
+        currentPlayer()->resetLoop();
+        notifyActionCheckedChanged(LOOP_CODE);
         return;
     }
 
@@ -1034,6 +1391,8 @@ mu::project::IProjectAudioSettingsPtr PlaybackController::audioSettings() const
 
 void PlaybackController::resetCurrentSequence()
 {
+    cancelTransportPlaybackWork();
+
     if (currentPlayer()) {
         currentPlayer()->playbackPositionChanged().disconnect(this);
         currentPlayer()->playbackStatusChanged().disconnect(this);
@@ -1050,6 +1409,8 @@ void PlaybackController::resetCurrentSequence()
     m_seqAsyncReceiver.async_disconnectAll();
 
     m_currentTick = 0;
+    m_desiredPlaybackPosition = 0.0;
+    m_pendingDesiredPlaybackPosition.reset();
 
     playback()->removeSequence(m_currentSequenceId);
 
@@ -1313,12 +1674,16 @@ void PlaybackController::onTrackNewlyAdded(const InstrumentTrackId& instrumentTr
 
 void PlaybackController::setupNewCurrentSequence(const TrackSequenceId sequenceId)
 {
+    cancelTransportPlaybackWork();
     playback()->removeAllTracks(m_currentSequenceId);
 
     m_currentSequenceId = sequenceId;
     m_onlineSoundsController->setCurrentSequence(sequenceId);
     m_player = playback()->player(sequenceId);
     globalContext()->setCurrentPlayer(m_player);
+
+    m_desiredPlaybackPosition = m_player ? clampPlaybackPosition(m_player->playbackPosition()) : secs_t { 0.0 };
+    m_pendingDesiredPlaybackPosition.reset();
 
     if (!notationPlayback()) {
         return;
@@ -1465,11 +1830,27 @@ void PlaybackController::setupSequencePlayer()
         m_currentTick = notationPlayback()->secToTick(pos);
         m_currentPlaybackPositionChanged.send(pos, m_currentTick);
 
+        if (m_pendingDesiredPlaybackPosition.has_value()) {
+            const secs_t pendingPosition = m_pendingDesiredPlaybackPosition.value();
+            const secs_t difference = pos >= pendingPosition ? pos - pendingPosition : pendingPosition - pos;
+            // The engine clock stores integer microseconds, so its seek
+            // acknowledgement need not reproduce the requested double exactly.
+            if (difference <= microsecsToSecs(2)) {
+                m_pendingDesiredPlaybackPosition.reset();
+            }
+        } else {
+            m_desiredPlaybackPosition = clampPlaybackPosition(pos);
+        }
+
         updateCurrentTempo();
 
         secs_t endSecs = totalPlayTime();
         if (pos + milisecsToSecs(1) >= endSecs) {
-            stop();
+            if (isTransportSyncEffective()) {
+                pauseLocal();
+            } else {
+                stopLocal();
+            }
         }
     });
 
@@ -1632,6 +2013,11 @@ double PlaybackController::tempoMultiplier() const
 
 void PlaybackController::setTempoMultiplier(double multiplier)
 {
+    if (isTransportSyncEffective()) {
+        interactive()->info("", muse::trc("playback", "Playback speed cannot be changed while JACK transport synchronization is active."));
+        return;
+    }
+
     if (!notationPlayback()) {
         return;
     }
@@ -1640,7 +2026,7 @@ void PlaybackController::setTempoMultiplier(double multiplier)
     bool playing = isPlaying();
 
     if (playing) {
-        pause();
+        pauseLocal();
     }
 
     notationPlayback()->setTempoMultiplier(multiplier);
@@ -1694,6 +2080,8 @@ void PlaybackController::setNotation(notation::INotationPtr notation)
         return;
     }
 
+    cancelTransportPlaybackWork();
+
     if (m_notation) {
         INotationPartsPtr notationParts = m_notation->parts();
         NotifyList<const Part*> partList = notationParts->partList();
@@ -1705,6 +2093,10 @@ void PlaybackController::setNotation(notation::INotationPtr notation)
     }
 
     m_notation = notation;
+    m_desiredPlaybackPosition = m_notation && currentPlayer()
+                                ? clampPlaybackPosition(currentPlayer()->playbackPosition())
+                                : secs_t { 0.0 };
+    m_pendingDesiredPlaybackPosition.reset();
 
     m_isPlayAllowedChanged.notify();
 
@@ -1716,7 +2108,7 @@ void PlaybackController::setNotation(notation::INotationPtr notation)
     setMasterNotation(m_notation->masterNotation());
 
     if (!m_notation->hasVisibleParts()) {
-        pause();
+        pauseLocal();
     }
 
     updateSoloMuteStates();
@@ -1793,6 +2185,11 @@ void PlaybackController::setIsExportingAudio(bool exporting)
 bool PlaybackController::canReceiveAction(const ActionCode& code) const
 {
     if (!m_masterNotation || !m_masterNotation->hasParts()) {
+        return false;
+    }
+
+    if (isTransportSyncEffective()
+        && (code == LOOP_CODE || code == LOOP_IN_CODE || code == LOOP_OUT_CODE || code == COUNT_IN_CODE)) {
         return false;
     }
 

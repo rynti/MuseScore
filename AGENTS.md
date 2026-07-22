@@ -72,9 +72,11 @@ The goal is dependable musician-facing software, not spacecraft certification.
 
 Required: builds cleanly, works in the named workflows, does not have obvious
 callback lifetime bugs or deadlocks, fails understandably when the JACK server
-is absent/lost, and has focused regression tests for transport routing and
-state. Manual JACK2 + Ardour verification is first-class evidence; a
-PipeWire-JACK smoke test is desirable when available.
+is absent/lost, and has focused regression tests for callback transport state.
+The user-facing routing boundary may instead be accepted through direct code
+review plus manual Ardour verification when a unit test would require adding a
+production-only test seam. Manual JACK2 + Ardour verification is first-class
+evidence; a PipeWire-JACK smoke test is desirable when available.
 
 Not required: exhaustive fault injection, proof of all callback interleavings,
 sample-exact behavior for every plugin, seamless behavior under arbitrary

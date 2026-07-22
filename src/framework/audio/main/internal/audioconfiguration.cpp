@@ -42,6 +42,7 @@ static constexpr sample_rate_t DEFAULT_SAMPLE_RATE = 44100;
 
 //TODO: add other setting: audio device etc
 static const Settings::Key AUDIO_API_KEY("audio", "io/audioApi");
+static const Settings::Key USE_JACK_TRANSPORT_KEY("audio", "io/useJackTransport");
 static const Settings::Key AUDIO_OUTPUT_DEVICE_ID_KEY("audio", "io/outputDevice");
 static const Settings::Key AUDIO_BUFFER_SIZE_KEY("audio", "io/bufferSize");
 static const Settings::Key AUDIO_SAMPLE_RATE_KEY("audio", "io/sampleRate");
@@ -66,6 +67,11 @@ void AudioConfiguration::init()
 #endif
     settings()->valueChanged(AUDIO_API_KEY).onReceive(nullptr, [this](const Val&) {
         m_currentAudioApiChanged.notify();
+    });
+
+    settings()->setDefaultValue(USE_JACK_TRANSPORT_KEY, Val(false));
+    settings()->valueChanged(USE_JACK_TRANSPORT_KEY).onReceive(nullptr, [this](const Val& value) {
+        m_useJackTransportChanged.send(value.toBool());
     });
 
     settings()->setDefaultValue(AUDIO_OUTPUT_DEVICE_ID_KEY, Val(DEFAULT_DEVICE_ID));
@@ -133,6 +139,21 @@ void AudioConfiguration::setCurrentAudioApi(const std::string& name)
 async::Notification AudioConfiguration::currentAudioApiChanged() const
 {
     return m_currentAudioApiChanged;
+}
+
+bool AudioConfiguration::useJackTransport() const
+{
+    return settings()->value(USE_JACK_TRANSPORT_KEY).toBool();
+}
+
+void AudioConfiguration::setUseJackTransport(bool use)
+{
+    settings()->setSharedValue(USE_JACK_TRANSPORT_KEY, Val(use));
+}
+
+async::Channel<bool> AudioConfiguration::useJackTransportChanged() const
+{
+    return m_useJackTransportChanged;
 }
 
 std::string AudioConfiguration::audioOutputDeviceId() const

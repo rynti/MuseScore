@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <optional>
+
 #include "modularity/ioc.h"
 #include "async/asyncable.h"
 #include "actions/iactionsdispatcher.h"
@@ -33,6 +35,7 @@
 #include "notation/inotationplayback.h"
 #include "audio/main/iplayer.h"
 #include "audio/main/iplayback.h"
+#include "audio/iaudiodrivercontroller.h"
 #include "audio/common/audiotypes.h"
 #include "iinteractive.h"
 #include "tours/itoursservice.h"
@@ -53,6 +56,7 @@ class PlaybackController : public IPlaybackController, public muse::actions::Act
     muse::ContextInject<muse::actions::IActionsDispatcher> dispatcher = { this };
     muse::ContextInject<context::IGlobalContext> globalContext = { this };
     muse::ContextInject<muse::audio::IPlayback> playback = { this };
+    muse::ContextInject<muse::audio::IAudioDriverController> audioDriverController = { this };
     muse::ContextInject<ISoundProfilesRepository> profilesRepo = { this };
     muse::ContextInject<muse::IInteractive> interactive = { this };
     muse::ContextInject<muse::tours::IToursService> tours = { this };
@@ -147,6 +151,8 @@ private:
 
     void seekRawTick(const muse::midi::tick_t tick, const bool flushSound = true);
     void seek(const muse::audio::secs_t secs, const bool flushSound = true);
+    muse::audio::secs_t clampPlaybackPosition(const muse::audio::secs_t secs) const;
+    void setDesiredPlaybackPosition(const muse::audio::secs_t secs, bool pendingSeek = true);
 
     bool isPaused() const;
     bool isLoaded() const;
@@ -176,6 +182,34 @@ private:
     void pause(bool select = false);
     void stop();
     void resume();
+
+    void pauseLocal(bool select = false);
+    void stopLocal();
+
+    bool isTransportSyncEffective() const;
+    void onTransportSyncStateChanged();
+    void onTransportEvent(const muse::audio::AudioDriverTransportEvent& event);
+    void applyTransportStopped(const muse::audio::secs_t position);
+    void applyTransportLocate(const muse::audio::secs_t position);
+    void applyTransportStop();
+    void selectAtPlaybackPosition(const muse::audio::secs_t position);
+
+    struct TransportPreparationContext {
+        uint64_t serial = 0;
+        uint64_t driverGeneration = 0;
+        uint64_t token = 0;
+        muse::audio::TrackSequenceId sequenceId = -1;
+        muse::audio::IPlayerPtr player;
+        notation::INotationPtr notation;
+        bool wasStopped = false;
+    };
+
+    void prepareForTransport(const muse::audio::AudioDriverTransportEvent& event);
+    bool isTransportPreparationCurrent(const TransportPreparationContext& context) const;
+    void finishTransportPreparation(const TransportPreparationContext& context, bool success);
+    void cancelTransportPreparation(bool notifyController);
+    void cancelTransportPlaybackWork();
+    void clearPendingUserTransportAction();
 
     muse::audio::secs_t playbackStartSecs() const;
 
@@ -252,6 +286,8 @@ private:
     muse::async::Channel<muse::audio::aux_channel_idx_t, std::string> m_auxChannelNameChanged;
 
     muse::async::Asyncable m_seqAsyncReceiver; //! HACK - see PlaybackController::setupSequenceTracks
+    muse::async::Asyncable m_transportPrepareReceiver;
+    muse::async::Asyncable m_transportStatusReceiver;
 
     InstrumentTrackIdMap m_instrumentTrackIdMap;
     AuxTrackIdMap m_auxTrackIdMap;
@@ -261,6 +297,13 @@ private:
 
     bool m_isExportingAudio = false;
     bool m_isRangeSelection = false;
+
+    muse::audio::secs_t m_desiredPlaybackPosition = 0.0;
+    std::optional<muse::audio::secs_t> m_pendingDesiredPlaybackPosition;
+    std::optional<TransportPreparationContext> m_transportPreparation;
+    uint64_t m_transportPreparationSerial = 0;
+    muse::audio::AudioDriverTransportSyncState m_lastTransportSyncState = muse::audio::AudioDriverTransportSyncState::Off;
+    bool m_pauseAndSelectPending = false;
 
     DrumsetLoader m_drumsetLoader;
     std::unique_ptr<OnlineSoundsController> m_onlineSoundsController;

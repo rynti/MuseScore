@@ -27,6 +27,7 @@
 #include "modularity/ioc.h"
 #include "context/iuicontextresolver.h"
 #include "context/iglobalcontext.h"
+#include "audio/iaudiodrivercontroller.h"
 #include "async/asyncable.h"
 #include "ui/uitypes.h"
 
@@ -35,6 +36,7 @@ class PlaybackUiActions : public muse::ui::IUiActionsModule, public muse::async:
 {
     muse::ContextInject<context::IUiContextResolver> uicontextResolver = { this };
     muse::ContextInject<context::IGlobalContext> globalContext = { this };
+    muse::ContextInject<muse::audio::IAudioDriverController> audioDriverController = { this };
 
 public:
     PlaybackUiActions(std::shared_ptr<PlaybackController> controller, const muse::modularity::ContextPtr& iocCtx);

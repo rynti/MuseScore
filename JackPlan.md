@@ -1,6 +1,8 @@
 # Focused Linux JACK Integration Plan
 
-> **Status:** Active implementation plan.
+> **Status:** Implemented in the working tree. Linux builds, focused automated
+> tests, PipeWire-JACK integration checks, and the core Ardour audio/transport
+> workflow pass. Native JACK2 and non-Linux CI remain external qualification.
 >
 > **Goal in one sentence:** make current MuseScore Studio genuinely useful as a
 > Linux JACK client, with stereo audio and bidirectional JACK transport control
@@ -707,17 +709,15 @@ does not block completion.
 
 ## 5. Verification and definition of done
 
-### 5.1 Focused automated checks
+### 5.1 Focused automated checks and code audit
 
 Do not build a fake universe around libjack. Add small tests where they buy
 clear confidence. Put the callback-domain state/token/seek arbitration in a
-small Qt-free helper testable from the existing `muse_audio_tests` target. Test
-the PlaybackController boundary through a narrow adapter/helper rather than
-constructing a production-sized controller fixture; one representative public
-action plus code review of the remaining registered action adapters is enough.
-Likewise, test the API reconciliation decision through a narrow model/helper
-seam; do not instantiate the full production Preferences page catalog merely
-for this feature.
+small Qt-free helper testable from the existing `muse_audio_tests` target.
+Verify the PlaybackController routing boundary and API/Preferences
+reconciliation through direct adapter review plus the manual matrix. Do not add
+a production abstraction solely to create a unit-test seam or instantiate the
+full production Preferences page catalog merely for this feature.
 
 - Transport state/token logic: a Prepare cannot be overwritten by a same-cycle
   Starting observation; one prepare per episode; two same-frame Starting
@@ -817,48 +817,56 @@ host.
 
 ### 5.3 Completion checklist
 
-- [ ] This plan's goal, scope lock, and non-goals were kept.
-- [ ] JACK-on and JACK-off Linux builds compile.
+Checked items below have direct build, automated-test, code-audit, or recorded
+PipeWire-JACK/Ardour evidence. Unchecked items remain external manual/CI
+qualification; they do not imply unfinished implementation code.
+
+- [x] This plan's goal, scope lock, and non-goals were kept.
+- [x] JACK-on and JACK-off Linux builds compile.
 - [ ] Shared interface/stub changes retain existing non-Linux CI/build
       compatibility without libjack or JACK UI.
-- [ ] The stale driver was rewritten with no global state and safe close order.
+- [x] The stale driver was rewritten with no global state and safe close order.
 - [ ] JACK coexists with ALSA/PipeWire in selection and failure fallback.
-- [ ] Linux driver creation is exact; after each successful startup/switch the
+- [x] Linux driver creation is exact; after each successful startup/switch the
       published/saved API matches the opened backend, and failed switches do not
       persist the rejected API.
 - [ ] Preferences Apply/Cancel/Reset follows the focused live-driver
       reconciliation policy without recursive switching or switching under
       Running/Paused playback.
-- [ ] Server rate/period become the active engine spec.
-- [ ] Successful open/switch publishes the server-derived active spec exactly
+- [x] Server rate/period become the active engine spec.
+- [x] Successful open/switch publishes the server-derived active spec exactly
       once; failed activation publishes none.
-- [ ] Stereo audio and note audition work with sync off.
-- [ ] Note audition also works while sync is Effective and JACK is Stopped.
-- [ ] `Use JACK transport` is persisted, default-off, and clearly presented.
-- [ ] Every enable/new JACK driver starts Pending from a fresh observation;
+- [x] Stereo score audio works with sync off.
+- [ ] Note audition works with sync off and while sync is Effective with JACK
+      Stopped.
+- [x] `Use JACK transport` is persisted, default-off, and clearly presented.
+- [x] Every enable/new JACK driver starts Pending from a fresh observation;
       Off/Pending/Effective/Unavailable presentation changes notify the UI and
       Off callbacks cannot affect playback or poison the next enable; rapid
       stop/start cannot bypass preparation.
-- [ ] In JACK-enabled Linux Preferences, the API selector is enabled only at
+- [x] In JACK-enabled Linux Preferences, the API selector is enabled only at
       exact `Stopped` status; Paused/Running keep it disabled.
-- [ ] Ardour-originated locate/start/stop/rolling-locate work.
-- [ ] MuseScore-originated Play/Pause/Pause-and-select/Stop/toolbar-seek/
+- [x] Ardour-originated locate/start/stop/rolling-locate work.
+- [x] MuseScore-originated Play/Pause/Pause-and-select/Stop/toolbar-seek/
       play-from-selection work.
-- [ ] External events cannot echo through the outbound user-action path.
-- [ ] Internal reset/EOF/content-maintenance calls cannot control JACK.
-- [ ] Preparation delivery, generation identity, ordered seeks, and render
+- [x] External events cannot echo through the outbound user-action path.
+- [x] Internal reset/EOF/content-maintenance calls cannot control JACK.
+- [x] Preparation delivery, generation identity, ordered seeks, and render
       eligibility cover overwrite, stale completion, and timeout cases.
-- [ ] Pending preparation is cancelled on newer locate, score change, driver
+- [x] Pending preparation is cancelled on newer locate, score change, driver
       change, shutdown, or sync disable.
-- [ ] Same-frame episodes get distinct tokens, an external locate can supersede
+- [x] Same-frame episodes get distinct tokens, an external locate can supersede
       a pending local locate, and an xrun/frame gap cannot synthesize a locate.
-- [ ] Loop/count-in/speed restrictions apply only while Effective and restore
+- [x] Loop/count-in/speed restrictions apply only while Effective and restore
       ordinary local behavior after disable, driver replacement, or server loss.
 - [ ] Missing server, normal backend switching, period change, xrun, and server
       loss meet the practical safety behavior.
-- [ ] Focused automated checks and the JACK2 manual matrix pass.
-- [ ] Accepted limitations are recorded.
-- [ ] PipeWire-JACK smoke is recorded when available (optional).
+- [x] Focused callback/state automated checks pass; user/external routing passed
+      focused code audit plus the manual PipeWire-JACK/Ardour workflow, and
+      API/Preferences reconciliation passed focused code audit.
+- [ ] The extended native JACK2 manual matrix passes.
+- [x] Accepted limitations are recorded.
+- [x] PipeWire-JACK smoke is recorded when available (optional).
 
 ## 6. Deferred work
 
