@@ -614,6 +614,12 @@ void AudioDriverController::pollJackStatus()
         LOGW() << "JACK reported " << status.xruns << " xrun(s); audio continues on the next period";
     }
 
+    if (status.transportFrameDiscontinuity) {
+        LOGW() << "JACK transport frame discontinuity: expected " << status.expectedTransportFrame
+               << ", observed " << status.observedTransportFrame
+               << "; stop and restart transport if playback is audibly out of sync";
+    }
+
     std::string fault;
     if (status.serverShutdown) {
         fault = "The JACK server shut down; restart the server and reselect JACK";

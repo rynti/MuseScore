@@ -3,6 +3,15 @@
 These repository-level instructions govern work on the Linux JACK feature. For
 unrelated tasks, they do not create JACK-specific obligations.
 
+## Repository remotes
+
+These remote rules apply to every task in this repository.
+
+- `rynti` is this working fork and is the only remote that may receive pushes.
+- `official` is the upstream MuseScore repository. Use it only to fetch or pull
+  upstream versions; never push to it.
+- Do not create or configure an `origin` remote as an alias for either remote.
+
 ## Mission
 
 Deliver a usable MuseScore Studio JACK backend on Linux with stereo output and

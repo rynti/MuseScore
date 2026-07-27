@@ -67,6 +67,9 @@ public:
         jack_nframes_t bufferSize = 0;
         jack_nframes_t sampleRate = 0;
         uint32_t xruns = 0;
+        bool transportFrameDiscontinuity = false;
+        jack_nframes_t expectedTransportFrame = 0;
+        jack_nframes_t observedTransportFrame = 0;
     };
 
     JackAudioDriver() = default;
@@ -142,6 +145,10 @@ private:
     int process(jack_nframes_t nframes) noexcept;
     int syncTransport(jack_transport_state_t state, const jack_position_t& position) noexcept;
     void observeTransport(jack_transport_state_t state, const jack_position_t& position, bool authoritative) noexcept;
+    bool shouldRenderTransportState(jack_transport_state_t state) const noexcept;
+    void resetExpectedRenderFrame(jack_nframes_t frame) noexcept;
+    void observeRenderedTransportBlock(jack_nframes_t frame, jack_nframes_t nframes) noexcept;
+    void clearExpectedRenderFrame() noexcept;
     void synchronizeTransportEpoch() noexcept;
     void publishPreparation(uint64_t generation, uint64_t token, jack_nframes_t frame) noexcept;
     void publishObservation(TransportObservationKind kind, uint64_t token, jack_nframes_t frame,
@@ -173,6 +180,10 @@ private:
     std::atomic<uint32_t> m_xrunCount { 0 };
     std::atomic<bool> m_bufferSizeTooLarge { false };
     std::atomic<uint32_t> m_runtimeStatusFlags { 0 };
+    std::atomic<bool> m_hasExpectedRenderFrame { false };
+    std::atomic<jack_nframes_t> m_expectedRenderFrame { 0 };
+    std::atomic<jack_nframes_t> m_transportFrameMismatchExpected { 0 };
+    std::atomic<jack_nframes_t> m_transportFrameMismatchObserved { 0 };
 
     std::atomic<uint64_t> m_transportGeneration { 0 };
     std::atomic<bool> m_transportRequested { false };

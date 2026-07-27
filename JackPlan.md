@@ -310,10 +310,11 @@ acceptance test demonstrates why. Document that reason in the change.
 4. Allocate an interleaved stereo float scratch buffer before activation. Give
    it capacity for at least `max(currentPeriod, MAXIMUM_BUFFER_SIZE)` frames so
    common runtime period changes do not allocate in a callback.
-5. Register both ports and the process, shutdown, xrun, buffer-size,
-   sample-rate, and sync callbacks. Check every port/callback registration API
-   that returns status and unwind on failure; `jack_on_shutdown()` itself
-   returns `void`.
+5. Register both output ports as terminal synthesized sources with
+   `JackPortIsOutput | JackPortIsTerminal`, then register the process, shutdown,
+   xrun, buffer-size, sample-rate, and sync callbacks. Check every
+   port/callback registration API that returns status and unwind on failure;
+   `jack_on_shutdown()` itself returns `void`.
 6. Before activation, install the controller-assigned driver generation and
    requested-sync state and initialize all callback-visible flags/slots. This
    prevents an activation callback from observing a half-configured bridge.
@@ -341,6 +342,8 @@ The process callback uses the current `nframes`, not the preferred buffer size:
    interleaved buffer with a byte count of
    `nframes * 2 * sizeof(float)`, then copy left/right samples to JACK's planar
    ports.
+   The first eligible Rolling period renders in that same process cycle; it is
+   not queued behind an additional driver period.
 4. Do not allocate, take a blocking lock, log, notify Qt, destroy resources, or
    call JACK graph/transport mutators from new callback code. Bounded publication
    through explicitly lock-free scalar atomics is allowed. The RT-safe reads
@@ -396,10 +399,11 @@ Use a tiny tokenized state exchange:
   process callback calls
   `jack_transport_query()` once per cycle and compares the state/frame with its
   last observation. Publish only a state transition or a changed frame while
-  stopped. Rolling frame mismatch is not a locate signal: JACK's sync callback
-  supplies real new-position events, while xruns/skipped process cycles can
-  also create a mismatch. Xruns merely rebase observation and never cause a
-  seek. Ordinary Rolling advance is not an event.
+  stopped. Each eligible Rolling render compares the current frame with the
+  expected next frame. A discontinuity publishes the expected and observed
+  frames for a main-thread warning, rebases to the observed block, and never
+  generates a locate, seek, catch-up render, or automatic chase. Ordinary
+  contiguous Rolling advance is not an event.
 - Give every enable request and newly installed JACK driver a new request
   epoch, and reset the callback-domain comparison baseline for that epoch. The
   first query/sync observation in it is therefore fresh even when JACK's state
@@ -733,6 +737,11 @@ full production Preferences page catalog merely for this feature.
   a late main-thread success after Rolling cannot enable it. Stopped continues
   engine rendering for audition; stop/relocate/replacement clears Rolling
   eligibility; a fresh rolling relocate can recover after timeout.
+- Rendered-frame continuity: first Rolling at the prepared frame and contiguous
+  periods remain clean; a skipped frame range reports the exact expected and
+  observed pair and rebases. Stop, locate, invalidation, sync disable, driver
+  replacement, and server loss clear the continuity baseline and pending
+  diagnostic.
 - User/external routing: a user Play becomes one JACK play request; an external
   Play applies locally without an outbound echo; sync-off uses the original
   local methods; a handled JACK-call failure does not start locally; a rejected
@@ -817,6 +826,11 @@ not only the UI cursor. Record the initial absolute start/locate error and the
 early-to-final offset change separately. Ordinary machine overload/xruns may
 invalidate a run; fix repeatable product defects, not a one-off overloaded test
 host.
+
+The frame-discontinuity warning identifies missed rendered JACK cycles that can
+produce period-sized lag. It is diagnostic only: restart transport to restore
+the prepared baseline rather than automatically chasing from the real-time
+callback.
 
 ### 5.3 Completion checklist
 

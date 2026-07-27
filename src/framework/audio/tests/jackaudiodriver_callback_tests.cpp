@@ -24,6 +24,8 @@
 
 #include <gtest/gtest.h>
 
+#include <limits>
+
 namespace muse::audio {
 class JackAudioDriverTestAccess
 {
@@ -60,6 +62,26 @@ public:
         return driver.m_renderEligibleToken.load(std::memory_order_acquire);
     }
 
+    static bool shouldRenderTransportState(const JackAudioDriver& driver, jack_transport_state_t state)
+    {
+        return driver.shouldRenderTransportState(state);
+    }
+
+    static void resetExpectedRenderFrame(JackAudioDriver& driver, jack_nframes_t frame)
+    {
+        driver.resetExpectedRenderFrame(frame);
+    }
+
+    static void observeRenderedTransportBlock(JackAudioDriver& driver, jack_nframes_t frame, jack_nframes_t nframes)
+    {
+        driver.observeRenderedTransportBlock(frame, nframes);
+    }
+
+    static void clearExpectedRenderFrame(JackAudioDriver& driver)
+    {
+        driver.clearExpectedRenderFrame();
+    }
+
     static int reportXrun(JackAudioDriver& driver)
     {
         return JackAudioDriver::xrunCallback(&driver);
@@ -85,6 +107,14 @@ JackAudioDriver::TransportPreparation beginStartingEpisode(JackAudioDriver& driv
     JackAudioDriver::TransportPreparation preparation;
     EXPECT_TRUE(driver.takePendingTransportPreparation(preparation));
     return preparation;
+}
+
+void completeSuccessfulPreparation(JackAudioDriver& driver,
+                                   const JackAudioDriver::TransportPreparation& preparation)
+{
+    ASSERT_TRUE(driver.activateTransportForPreparation(preparation.generation, preparation.token));
+    driver.completeTransportPreparation(preparation.generation, preparation.token, true);
+    ASSERT_EQ(JackAudioDriverTestAccess::synchronize(driver, JackTransportStarting, preparation.frame), 1);
 }
 
 TEST(JackAudioDriverCallbackTests, FreshStoppedArmsAndPublishes)
@@ -214,6 +244,124 @@ TEST(JackAudioDriverCallbackTests, RollingBeforeStoppedDoesNotArmOrPrepare)
     EXPECT_EQ(JackAudioDriverTestAccess::synchronize(driver, JackTransportStarting, 7200), 1);
     JackAudioDriver::TransportPreparation preparation;
     EXPECT_FALSE(driver.takePendingTransportPreparation(preparation));
+}
+
+TEST(JackAudioDriverCallbackTests, TransportStateGatePreservesLocalAndPreparedRendering)
+{
+    JackAudioDriver driver;
+    EXPECT_TRUE(JackAudioDriverTestAccess::shouldRenderTransportState(driver, JackTransportStarting));
+
+    JackAudioDriverTestAccess::prime(driver, GENERATION);
+    EXPECT_TRUE(JackAudioDriverTestAccess::shouldRenderTransportState(driver, JackTransportRolling));
+
+    const JackAudioDriver::TransportPreparation preparation = beginStartingEpisode(driver, 8400);
+    ASSERT_NE(preparation.token, 0);
+    EXPECT_TRUE(JackAudioDriverTestAccess::shouldRenderTransportState(driver, JackTransportStopped));
+    EXPECT_FALSE(JackAudioDriverTestAccess::shouldRenderTransportState(driver, JackTransportStarting));
+    EXPECT_FALSE(JackAudioDriverTestAccess::shouldRenderTransportState(driver, JackTransportRolling));
+    EXPECT_FALSE(JackAudioDriverTestAccess::shouldRenderTransportState(
+                     driver, static_cast<jack_transport_state_t>(99)));
+
+    completeSuccessfulPreparation(driver, preparation);
+    EXPECT_TRUE(JackAudioDriverTestAccess::shouldRenderTransportState(driver, JackTransportRolling));
+    EXPECT_TRUE(JackAudioDriverTestAccess::shouldRenderTransportState(driver, JackTransportLooping));
+
+    driver.setTransportSyncEnabled(false);
+    EXPECT_TRUE(JackAudioDriverTestAccess::shouldRenderTransportState(driver, JackTransportStarting));
+}
+
+TEST(JackAudioDriverCallbackTests, FailedPreparationRemainsSilentAtFirstRolling)
+{
+    JackAudioDriver driver;
+    JackAudioDriverTestAccess::prime(driver, GENERATION);
+    const JackAudioDriver::TransportPreparation preparation = beginStartingEpisode(driver, 9600);
+    ASSERT_NE(preparation.token, 0);
+
+    ASSERT_TRUE(driver.activateTransportForPreparation(preparation.generation, preparation.token));
+    driver.completeTransportPreparation(preparation.generation, preparation.token, false);
+    ASSERT_EQ(JackAudioDriverTestAccess::synchronize(driver, JackTransportStarting, preparation.frame), 1);
+
+    EXPECT_FALSE(JackAudioDriverTestAccess::shouldRenderTransportState(driver, JackTransportRolling));
+}
+
+TEST(JackAudioDriverCallbackTests, PreparedFirstRollingAndContiguousPeriodsRemainContinuous)
+{
+    constexpr jack_nframes_t frame = 12000;
+    constexpr jack_nframes_t period = 256;
+
+    JackAudioDriver driver;
+    JackAudioDriverTestAccess::prime(driver, GENERATION);
+    const JackAudioDriver::TransportPreparation preparation = beginStartingEpisode(driver, frame);
+    completeSuccessfulPreparation(driver, preparation);
+
+    ASSERT_TRUE(JackAudioDriverTestAccess::shouldRenderTransportState(driver, JackTransportRolling));
+    JackAudioDriverTestAccess::observeRenderedTransportBlock(driver, frame, period);
+    EXPECT_FALSE(driver.takeRuntimeStatus().transportFrameDiscontinuity);
+
+    JackAudioDriverTestAccess::observeRenderedTransportBlock(driver, frame + period, period);
+    JackAudioDriverTestAccess::observeRenderedTransportBlock(driver, frame + 2 * period, period);
+    EXPECT_FALSE(driver.takeRuntimeStatus().transportFrameDiscontinuity);
+}
+
+TEST(JackAudioDriverCallbackTests, FrameDiscontinuitiesReportExactPairAndRebase)
+{
+    constexpr jack_nframes_t frame = 15000;
+    constexpr jack_nframes_t period = 1024;
+
+    JackAudioDriver driver;
+    JackAudioDriverTestAccess::resetExpectedRenderFrame(driver, frame);
+
+    JackAudioDriverTestAccess::observeRenderedTransportBlock(driver, frame + period, period);
+    JackAudioDriver::RuntimeStatus status = driver.takeRuntimeStatus();
+    ASSERT_TRUE(status.transportFrameDiscontinuity);
+    EXPECT_EQ(status.expectedTransportFrame, frame);
+    EXPECT_EQ(status.observedTransportFrame, frame + period);
+
+    JackAudioDriverTestAccess::observeRenderedTransportBlock(driver, frame + 3 * period, period);
+    status = driver.takeRuntimeStatus();
+    ASSERT_TRUE(status.transportFrameDiscontinuity);
+    EXPECT_EQ(status.expectedTransportFrame, frame + 2 * period);
+    EXPECT_EQ(status.observedTransportFrame, frame + 3 * period);
+
+    JackAudioDriverTestAccess::observeRenderedTransportBlock(driver, frame + 4 * period, period);
+    EXPECT_FALSE(driver.takeRuntimeStatus().transportFrameDiscontinuity);
+}
+
+TEST(JackAudioDriverCallbackTests, StopLocateInvalidationAndClearDiscardFrameExpectation)
+{
+    constexpr jack_nframes_t frame = 20000;
+    constexpr jack_nframes_t period = 2048;
+
+    JackAudioDriver driver;
+    JackAudioDriverTestAccess::prime(driver, GENERATION);
+
+    JackAudioDriverTestAccess::resetExpectedRenderFrame(driver, frame);
+    JackAudioDriverTestAccess::observeRenderedTransportBlock(driver, frame + period, period);
+    JackAudioDriverTestAccess::observe(driver, JackTransportStopped, frame, true);
+    EXPECT_FALSE(driver.takeRuntimeStatus().transportFrameDiscontinuity);
+
+    JackAudioDriverTestAccess::resetExpectedRenderFrame(driver, frame);
+    JackAudioDriverTestAccess::observeRenderedTransportBlock(driver, frame + period, period);
+    driver.cancelPendingTransportWork();
+    EXPECT_FALSE(driver.takeRuntimeStatus().transportFrameDiscontinuity);
+
+    JackAudioDriverTestAccess::resetExpectedRenderFrame(driver, frame);
+    JackAudioDriverTestAccess::observeRenderedTransportBlock(driver, frame + period, period);
+    JackAudioDriverTestAccess::clearExpectedRenderFrame(driver);
+    EXPECT_FALSE(driver.takeRuntimeStatus().transportFrameDiscontinuity);
+}
+
+TEST(JackAudioDriverCallbackTests, RenderFrameOverflowClearsExpectation)
+{
+    constexpr jack_nframes_t period = 256;
+    constexpr jack_nframes_t frame = std::numeric_limits<jack_nframes_t>::max() - period + 1;
+
+    JackAudioDriver driver;
+    JackAudioDriverTestAccess::resetExpectedRenderFrame(driver, frame);
+    JackAudioDriverTestAccess::observeRenderedTransportBlock(driver, frame, period);
+    JackAudioDriverTestAccess::observeRenderedTransportBlock(driver, frame - period, period);
+
+    EXPECT_FALSE(driver.takeRuntimeStatus().transportFrameDiscontinuity);
 }
 
 TEST(JackAudioDriverCallbackTests, XrunDoesNotSynthesizeTransportObservation)

@@ -47,6 +47,7 @@ constexpr uint32_t STATUS_SAMPLE_RATE_CHANGED = 1U << 1;
 constexpr uint32_t STATUS_BUFFER_SIZE_CHANGED = 1U << 2;
 constexpr uint32_t STATUS_BUFFER_SIZE_TOO_LARGE = 1U << 3;
 constexpr uint32_t STATUS_XRUN = 1U << 4;
+constexpr uint32_t STATUS_TRANSPORT_FRAME_DISCONTINUITY = 1U << 5;
 
 constexpr bool isTransportStarting(jack_transport_state_t state) noexcept
 {
@@ -133,14 +134,16 @@ bool JackAudioDriver::open(const Spec& spec, Spec* activeSpec)
         return false;
     }
 
-    m_leftOutputPort = jack_port_register(m_client, JACK_LEFT_PORT_NAME, JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0);
+    m_leftOutputPort = jack_port_register(m_client, JACK_LEFT_PORT_NAME, JACK_DEFAULT_AUDIO_TYPE,
+                                          JackPortIsOutput | JackPortIsTerminal, 0);
     if (!m_leftOutputPort) {
         LOGE() << "Failed to register JACK output port: " << JACK_LEFT_PORT_NAME;
         close();
         return false;
     }
 
-    m_rightOutputPort = jack_port_register(m_client, JACK_RIGHT_PORT_NAME, JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0);
+    m_rightOutputPort = jack_port_register(m_client, JACK_RIGHT_PORT_NAME, JACK_DEFAULT_AUDIO_TYPE,
+                                           JackPortIsOutput | JackPortIsTerminal, 0);
     if (!m_rightOutputPort) {
         LOGE() << "Failed to register JACK output port: " << JACK_RIGHT_PORT_NAME;
         close();
@@ -542,6 +545,11 @@ JackAudioDriver::RuntimeStatus JackAudioDriver::takeRuntimeStatus()
     status.bufferSize = m_reportedBufferSize.load(std::memory_order_acquire);
     status.sampleRate = m_reportedSampleRate.load(std::memory_order_acquire);
     status.xruns = m_xrunCount.exchange(0, std::memory_order_acq_rel);
+    status.transportFrameDiscontinuity = (flags & STATUS_TRANSPORT_FRAME_DISCONTINUITY) != 0;
+    if (status.transportFrameDiscontinuity) {
+        status.expectedTransportFrame = m_transportFrameMismatchExpected.load(std::memory_order_relaxed);
+        status.observedTransportFrame = m_transportFrameMismatchObserved.load(std::memory_order_relaxed);
+    }
 
     if (status.bufferSizeChanged && !status.bufferSizeTooLarge && status.bufferSize > 0
         && m_activeSpec.isValid() && m_activeSpec.output.samplesPerChannel != status.bufferSize) {
@@ -629,6 +637,7 @@ void JackAudioDriver::beginStartingEpisode(const JackTransportEpisodeTracker::St
 
 void JackAudioDriver::invalidateTransportEpisode() noexcept
 {
+    clearExpectedRenderFrame();
     // The token is the authoritative identity and is cleared last. If this
     // races publication of a new callback-domain episode, the final token
     // store gives the two operations a safe last-writer-wins linearization:
@@ -646,6 +655,7 @@ void JackAudioDriver::invalidateTransportEpisode() noexcept
 
 void JackAudioDriver::cancelTransportEpisodeIfUnchanged(uint64_t token) noexcept
 {
+    clearExpectedRenderFrame();
     if (token == 0) {
         return;
     }
@@ -722,6 +732,11 @@ int JackAudioDriver::syncTransport(jack_transport_state_t state, const jack_posi
             const uint32_t result = m_completionResult.load(std::memory_order_relaxed);
             if (result == COMPLETION_SUCCESS || result == COMPLETION_FAILURE) {
                 m_releasedPreparationToken.store(token, std::memory_order_release);
+                if (result == COMPLETION_SUCCESS) {
+                    resetExpectedRenderFrame(m_currentPreparationFrame.load(std::memory_order_relaxed));
+                } else {
+                    clearExpectedRenderFrame();
+                }
                 m_renderEligibleToken.store(result == COMPLETION_SUCCESS ? token : 0, std::memory_order_release);
                 return 1;
             }
@@ -795,12 +810,7 @@ void JackAudioDriver::observeTransport(jack_transport_state_t state, const jack_
     } else if (rolling) {
         const bool armed = m_transportCallbackArmed.load(std::memory_order_acquire);
         const uint64_t token = m_currentPreparationToken.load(std::memory_order_acquire);
-        const bool renderEligible = armed
-                                    && token != 0
-                                    && m_currentPreparationGeneration.load(std::memory_order_relaxed)
-                                    == m_transportGeneration.load(std::memory_order_acquire)
-                                    && m_releasedPreparationToken.load(std::memory_order_acquire) == token
-                                    && m_renderEligibleToken.load(std::memory_order_acquire) == token;
+        const bool renderEligible = armed && shouldRenderTransportState(state);
         const bool changed = !m_callbackHasObservation
                              || (m_callbackLastState != JackTransportRolling
                                  && m_callbackLastState != JackTransportLooping);
@@ -824,6 +834,66 @@ void JackAudioDriver::observeTransport(jack_transport_state_t state, const jack_
     m_callbackHasObservation = true;
     m_callbackLastState = state;
     m_callbackLastFrame = position.frame;
+}
+
+bool JackAudioDriver::shouldRenderTransportState(jack_transport_state_t state) const noexcept
+{
+    if (!m_transportRequested.load(std::memory_order_acquire)
+        || !m_transportCallbackArmed.load(std::memory_order_acquire)
+        || state == JackTransportStopped) {
+        return true;
+    }
+
+    if (isTransportStarting(state)) {
+        return false;
+    }
+
+    if (state == JackTransportRolling || state == JackTransportLooping) {
+        const uint64_t token = m_currentPreparationToken.load(std::memory_order_acquire);
+        return token != 0
+               && m_currentPreparationGeneration.load(std::memory_order_relaxed)
+               == m_transportGeneration.load(std::memory_order_acquire)
+               && m_releasedPreparationToken.load(std::memory_order_acquire) == token
+               && m_renderEligibleToken.load(std::memory_order_acquire) == token;
+    }
+
+    return false;
+}
+
+void JackAudioDriver::resetExpectedRenderFrame(jack_nframes_t frame) noexcept
+{
+    m_expectedRenderFrame.store(frame, std::memory_order_relaxed);
+    m_hasExpectedRenderFrame.store(true, std::memory_order_release);
+}
+
+void JackAudioDriver::observeRenderedTransportBlock(jack_nframes_t frame, jack_nframes_t nframes) noexcept
+{
+    if (!m_hasExpectedRenderFrame.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    if (nframes > std::numeric_limits<jack_nframes_t>::max() - frame) {
+        clearExpectedRenderFrame();
+        return;
+    }
+
+    const jack_nframes_t expected = m_expectedRenderFrame.load(std::memory_order_relaxed);
+    if (frame != expected) {
+        m_transportFrameMismatchExpected.store(expected, std::memory_order_relaxed);
+        m_transportFrameMismatchObserved.store(frame, std::memory_order_relaxed);
+        m_runtimeStatusFlags.fetch_or(STATUS_TRANSPORT_FRAME_DISCONTINUITY, std::memory_order_release);
+    }
+
+    m_expectedRenderFrame.store(frame + nframes, std::memory_order_relaxed);
+}
+
+void JackAudioDriver::clearExpectedRenderFrame() noexcept
+{
+    m_hasExpectedRenderFrame.store(false, std::memory_order_release);
+    m_expectedRenderFrame.store(0, std::memory_order_relaxed);
+    m_transportFrameMismatchExpected.store(0, std::memory_order_relaxed);
+    m_transportFrameMismatchObserved.store(0, std::memory_order_relaxed);
+    m_runtimeStatusFlags.fetch_and(~STATUS_TRANSPORT_FRAME_DISCONTINUITY, std::memory_order_acq_rel);
 }
 
 int JackAudioDriver::process(jack_nframes_t nframes) noexcept
@@ -863,22 +933,13 @@ int JackAudioDriver::process(jack_nframes_t nframes) noexcept
             const jack_transport_state_t state = jack_transport_query(m_client, &position);
             observeTransport(state, position, false);
 
-            if (m_transportCallbackArmed.load(std::memory_order_acquire)) {
-                const bool starting = isTransportStarting(state);
-                if (starting) {
-                    return 0;
-                }
+            if (!shouldRenderTransportState(state)) {
+                return 0;
+            }
 
-                if (state == JackTransportRolling || state == JackTransportLooping) {
-                    const uint64_t token = m_currentPreparationToken.load(std::memory_order_acquire);
-                    if (token == 0
-                        || m_currentPreparationGeneration.load(std::memory_order_relaxed)
-                        != m_transportGeneration.load(std::memory_order_acquire)
-                        || m_releasedPreparationToken.load(std::memory_order_acquire) != token
-                        || m_renderEligibleToken.load(std::memory_order_acquire) != token) {
-                        return 0;
-                    }
-                }
+            if (m_transportCallbackArmed.load(std::memory_order_acquire)
+                && (state == JackTransportRolling || state == JackTransportLooping)) {
+                observeRenderedTransportBlock(position.frame, nframes);
             }
         }
     }
