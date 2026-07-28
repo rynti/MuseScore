@@ -38,7 +38,7 @@ public:
     virtual std::vector<std::string> availableAudioApiList() const = 0;
 
     virtual std::string currentAudioApi() const = 0;
-    virtual void changeCurrentAudioApi(const std::string& name) = 0;
+    virtual bool changeCurrentAudioApi(const std::string& name) = 0;
     virtual async::Notification currentAudioApiChanged() const = 0;
 
     // Current driver operation
@@ -63,5 +63,24 @@ public:
     virtual std::vector<sample_rate_t> availableOutputDeviceSampleRates() const = 0;
     virtual void changeSampleRate(sample_rate_t sampleRate) = 0;
     virtual async::Notification outputDeviceSampleRateChanged() const = 0;
+
+    // Optional shared transport. The default implementation keeps existing
+    // non-JACK controllers and test doubles source-compatible.
+    virtual bool isTransportSyncAvailable() const { return false; }
+    virtual bool transportSyncRequested() const { return false; }
+    virtual AudioDriverTransportSyncState transportSyncState() const { return AudioDriverTransportSyncState::Off; }
+    virtual async::Notification transportSyncStateChanged() const { return {}; }
+    virtual async::Channel<AudioDriverTransportEvent> transportEvent() const { return {}; }
+
+    virtual void setTransportSyncEnabled(bool) {}
+    virtual bool requestTransportPlay(secs_t) { return false; }
+    virtual bool requestTransportPause() { return false; }
+    virtual bool requestTransportStop() { return false; }
+    virtual bool requestTransportSeek(secs_t) { return false; }
+
+    virtual bool isTransportPreparationCurrent(uint64_t, uint64_t) const { return false; }
+    virtual bool activateTransportForPreparation(uint64_t, uint64_t) { return false; }
+    virtual bool completeTransportPreparation(uint64_t, uint64_t, bool) { return false; }
+    virtual void cancelPendingTransportWork() {}
 };
 }

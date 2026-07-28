@@ -42,7 +42,7 @@ public:
 
     TrackSequenceId sequenceId() const override;
 
-    async::Promise<Ret> prepareToPlay() override;
+    async::Promise<Ret> prepareToPlay(secs_t renderLead = 0.0) override;
 
     void play(const secs_t delay = 0) override;
     void seek(const secs_t newPosition, const bool flushSound = true) override;

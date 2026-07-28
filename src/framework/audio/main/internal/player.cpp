@@ -89,12 +89,12 @@ TrackSequenceId Player::sequenceId() const
     return m_sequenceId;
 }
 
-async::Promise<Ret> Player::prepareToPlay()
+async::Promise<Ret> Player::prepareToPlay(secs_t renderLead)
 {
     ONLY_AUDIO_MAIN_THREAD;
-    return async::make_promise<Ret>([this](auto resolve, auto) {
+    return async::make_promise<Ret>([this, renderLead](auto resolve, auto) {
         ONLY_AUDIO_MAIN_THREAD;
-        Msg msg = rpc::make_request(Method::PrepareToPlay, RpcPacker::pack(m_sequenceId));
+        Msg msg = rpc::make_request(Method::PrepareToPlay, RpcPacker::pack(m_sequenceId, renderLead));
         channel()->send(msg, [resolve](const Msg& res) {
             ONLY_AUDIO_MAIN_THREAD;
             Ret ret;
@@ -119,10 +119,6 @@ void Player::play(const secs_t delay)
 void Player::seek(const secs_t newPosition, const bool flushSound)
 {
     ONLY_AUDIO_MAIN_THREAD;
-
-    if (m_playbackPosition == newPosition) {
-        return;
-    }
 
     Msg msg = rpc::make_request(Method::Seek, RpcPacker::pack(m_sequenceId, newPosition, flushSound));
     channel()->send(msg);

@@ -182,7 +182,7 @@ enum class AudioResourceType {
     AudioUnit,
 };
 
-static const std::map<AudioResourceType, QString> RESOURCE_TYPE_MAP = {
+inline const std::map<AudioResourceType, QString> RESOURCE_TYPE_MAP = {
     { AudioResourceType::Undefined, "undefined" },
     { AudioResourceType::MuseSamplerSoundPack, "muse_sampler_sound_pack" },
     { AudioResourceType::FluidSoundfont, "fluid_soundfont" },
@@ -438,6 +438,36 @@ enum class PlaybackStatus {
     Stopped = 0,
     Paused,
     Running
+};
+
+//! Optional shared-transport state exposed by the active audio driver.
+//! `Pending` deliberately leaves the normal local playback controls active;
+//! only `Effective` makes the shared transport authoritative.
+enum class AudioDriverTransportSyncState : unsigned char {
+    Off = 0,
+    Pending,
+    Effective,
+    Unavailable,
+};
+
+enum class AudioDriverTransportEventType : unsigned char {
+    Unknown = 0,
+    Prepare,
+    Stopped,
+    Stop,
+    Locate,
+    RollingUnprepared,
+    Unavailable,
+    Error,
+};
+
+struct AudioDriverTransportEvent {
+    AudioDriverTransportEventType type = AudioDriverTransportEventType::Unknown;
+    uint64_t driverGeneration = 0;
+    uint64_t token = 0;
+    secs_t position = 0.0;
+    secs_t renderLead = 0.0;
+    std::string message;
 };
 
 using AudioDeviceID = std::string;
