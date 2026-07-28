@@ -43,6 +43,7 @@ class TaskScheduler;
 }
 
 namespace muse::audio::engine {
+class MixerTestAccess;
 class Mixer : public AbstractAudioSource, public IGetPlaybackPosition, public Contextable, public async::Asyncable,
     public std::enable_shared_from_this<Mixer>
 {
@@ -62,6 +63,7 @@ public:
 
     void addClock(IClockPtr clock);
     void removeClock(IClockPtr clock);
+    void setRenderLead(msecs_t renderLead);
 
     AudioOutputParams masterOutputParams() const;
     void setMasterOutputParams(const AudioOutputParams& params);
@@ -82,10 +84,12 @@ public:
     samples_t process(float* outBuffer, samples_t samplesPerChannel) override;
 
 private:
+    friend class MixerTestAccess;
     using TracksData = std::map<TrackId, std::vector<float> >;
 
     msecs_t playbackPosition() const override;
     samples_t playbackPositionSamples() const override;
+    msecs_t renderPosition(msecs_t logicalPosition) const;
 
     void processTrackChannels(size_t outBufferSize, size_t samplesPerChannel, TracksData& outTracksData);
     void mixOutputFromChannel(float* outBuffer, const float* inBuffer, unsigned int samplesCount) const;
@@ -123,6 +127,7 @@ private:
     std::vector<AuxChannelInfo> m_auxChannelInfoList;
 
     std::set<IClockPtr> m_clocks;
+    msecs_t m_renderLead = 0;
 
     mutable AudioSignalsNotifier m_audioSignalNotifier;
 

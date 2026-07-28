@@ -70,7 +70,7 @@ public:
     virtual void clearSources() = 0;
 
     // 3. Play Sequence
-    virtual async::Promise<Ret> prepareToPlay(TrackSequenceId sequenceId) = 0;
+    virtual async::Promise<Ret> prepareToPlay(TrackSequenceId sequenceId, secs_t renderLead = 0.0) = 0;
 
     virtual void play(TrackSequenceId sequenceId, const secs_t delay = 0.0) = 0;
     virtual void seek(TrackSequenceId sequenceId, const secs_t newPosition, const bool flushSound = true) = 0;

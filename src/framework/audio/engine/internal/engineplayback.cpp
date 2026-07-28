@@ -358,7 +358,7 @@ void EnginePlayback::clearSources()
 }
 
 // 3. Play Sequence
-async::Promise<Ret> EnginePlayback::prepareToPlay(TrackSequenceId sequenceId)
+async::Promise<Ret> EnginePlayback::prepareToPlay(TrackSequenceId sequenceId, secs_t renderLead)
 {
     ONLY_AUDIO_ENGINE_THREAD;
     ITrackSequencePtr s = sequence(sequenceId);
@@ -367,7 +367,7 @@ async::Promise<Ret> EnginePlayback::prepareToPlay(TrackSequenceId sequenceId)
             return resolve(make_ret(Err::InvalidSequenceId, "invalid sequence id"));
         });
     }
-    return s->player()->prepareToPlay();
+    return s->player()->prepareToPlay(renderLead);
 }
 
 void EnginePlayback::play(TrackSequenceId sequenceId, const secs_t delay)

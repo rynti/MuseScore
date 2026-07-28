@@ -22,6 +22,9 @@
 
 #include "sequenceplayer.h"
 
+#include <cmath>
+#include <limits>
+
 #include "audio/common/audiosanitizer.h"
 
 #include "log.h"
@@ -74,9 +77,10 @@ SequencePlayer::~SequencePlayer()
     m_clock->setOnAction(nullptr);
 }
 
-async::Promise<Ret> SequencePlayer::prepareToPlay()
+async::Promise<Ret> SequencePlayer::prepareToPlay(secs_t renderLead)
 {
     ONLY_AUDIO_ENGINE_THREAD;
+    applyRenderLead(renderLead);
 
     return async::make_promise<Ret>([this](auto resolve, auto) {
         prepareAllTracksToPlay([resolve]() {
@@ -85,6 +89,13 @@ async::Promise<Ret> SequencePlayer::prepareToPlay()
 
         return Promise<Ret>::dummy_result();
     });
+}
+
+void SequencePlayer::applyRenderLead(secs_t renderLead)
+{
+    m_renderLead = renderLeadMicroseconds(renderLead);
+    audioEngine()->mixer()->setRenderLead(m_renderLead);
+    seekAllTracks(m_clock->currentTime(), true);
 }
 
 void SequencePlayer::play(const secs_t delay)
@@ -212,6 +223,32 @@ Channel<PlaybackStatus> SequencePlayer::playbackStatusChanged() const
     return m_clock->statusChanged();
 }
 
+msecs_t SequencePlayer::renderLeadMicroseconds(secs_t renderLead)
+{
+    const double seconds = renderLead.to_double();
+    if (!std::isfinite(seconds) || seconds <= 0.0) {
+        return 0;
+    }
+
+    constexpr msecs_t maximum = std::numeric_limits<msecs_t>::max();
+    constexpr double maximumSeconds = static_cast<double>(maximum) / 1000000.0;
+    if (seconds >= maximumSeconds) {
+        return maximum;
+    }
+
+    return static_cast<msecs_t>(seconds * 1000000.0);
+}
+
+msecs_t SequencePlayer::renderPosition(msecs_t logicalPosition) const
+{
+    constexpr msecs_t maximum = std::numeric_limits<msecs_t>::max();
+    if (logicalPosition >= maximum - m_renderLead) {
+        return maximum;
+    }
+
+    return logicalPosition + m_renderLead;
+}
+
 void SequencePlayer::seekAllTracks(const msecs_t newPositionMsecs, bool flushSound)
 {
     IF_ASSERT_FAILED(m_getTracks) {
@@ -220,7 +257,7 @@ void SequencePlayer::seekAllTracks(const msecs_t newPositionMsecs, bool flushSou
 
     for (const auto& pair : m_getTracks->allTracks()) {
         if (pair.second->inputHandler) {
-            pair.second->inputHandler->seek(newPositionMsecs, flushSound);
+            pair.second->inputHandler->seek(renderPosition(newPositionMsecs), flushSound);
         }
     }
 }

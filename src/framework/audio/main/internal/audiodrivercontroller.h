@@ -119,7 +119,7 @@ private:
     void applyRequestedTransportState();
     void setTransportSyncState(AudioDriverTransportSyncState state);
     void sendTransportEvent(AudioDriverTransportEventType type, uint64_t token = 0, secs_t position = 0.0,
-                            const std::string& message = {});
+                            const std::string& message = {}, secs_t renderLead = 0.0);
     void pollJackTransport();
     void pollJackStatus();
     uint64_t secondsToTransportFrame(secs_t position) const;

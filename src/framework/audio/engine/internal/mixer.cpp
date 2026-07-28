@@ -21,6 +21,9 @@
  */
 #include "mixer.h"
 
+#include <algorithm>
+#include <limits>
+
 #include "audio/common/audiosanitizer.h"
 #include "audio/common/audioerrors.h"
 
@@ -88,6 +91,8 @@ RetVal<MixerChannelPtr> Mixer::addChannel(const TrackId trackId, ITrackAudioInpu
         result.ret = make_ret(Err::InvalidAudioSource);
         return result;
     }
+
+    source->seek(playbackPosition());
 
     MixerChannelPtr channel = std::make_shared<MixerChannel>(trackId, m_outputSpec, source, this, iocContext());
     std::weak_ptr<MixerChannel> channelWeakPtr = channel;
@@ -211,13 +216,33 @@ msecs_t Mixer::playbackPosition() const
     }
 
     const IClockPtr clock = *m_clocks.begin();
-    return clock->currentTime();
+    return renderPosition(clock->currentTime());
 }
 
 samples_t Mixer::playbackPositionSamples() const
 {
     const msecs_t pos = playbackPosition();
-    return pos / 1000000. * m_outputSpec.sampleRate;
+    if (pos <= 0 || m_outputSpec.sampleRate == 0) {
+        return 0;
+    }
+
+    const long double samples = static_cast<long double>(pos) * m_outputSpec.sampleRate / 1000000.0L;
+    constexpr samples_t maximum = std::numeric_limits<samples_t>::max();
+    if (samples >= static_cast<long double>(maximum)) {
+        return maximum;
+    }
+
+    return static_cast<samples_t>(samples);
+}
+
+msecs_t Mixer::renderPosition(msecs_t logicalPosition) const
+{
+    constexpr msecs_t maximum = std::numeric_limits<msecs_t>::max();
+    if (logicalPosition >= maximum - m_renderLead) {
+        return maximum;
+    }
+
+    return logicalPosition + m_renderLead;
 }
 
 samples_t Mixer::process(float* outBuffer, samples_t samplesPerChannel)
@@ -388,6 +413,15 @@ void Mixer::removeClock(IClockPtr clock)
     ONLY_AUDIO_ENGINE_THREAD;
 
     m_clocks.erase(clock);
+    if (m_clocks.empty()) {
+        m_renderLead = 0;
+    }
+}
+
+void Mixer::setRenderLead(msecs_t renderLead)
+{
+    ONLY_AUDIO_ENGINE_THREAD;
+    m_renderLead = std::max<msecs_t>(0, renderLead);
 }
 
 AudioOutputParams Mixer::masterOutputParams() const

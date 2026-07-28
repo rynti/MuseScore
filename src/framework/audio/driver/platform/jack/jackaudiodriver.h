@@ -49,6 +49,7 @@ public:
         uint64_t generation = 0;
         uint64_t token = 0;
         jack_nframes_t frame = 0;
+        jack_nframes_t renderLeadFrames = 0;
     };
 
     struct TransportObservation {
@@ -123,6 +124,7 @@ private:
         std::atomic<uint64_t> generation { 0 };
         std::atomic<uint64_t> token { 0 };
         std::atomic<jack_nframes_t> frame { 0 };
+        std::atomic<jack_nframes_t> renderLeadFrames { 0 };
     };
 
     struct AtomicObservationSlot {
@@ -138,19 +140,23 @@ private:
     static int processCallback(jack_nframes_t nframes, void* context) noexcept;
     static int syncCallback(jack_transport_state_t state, jack_position_t* position, void* context) noexcept;
     static void shutdownCallback(void* context) noexcept;
+    static void latencyCallback(jack_latency_callback_mode_t mode, void* context) noexcept;
     static int xrunCallback(void* context) noexcept;
     static int bufferSizeCallback(jack_nframes_t nframes, void* context) noexcept;
     static int sampleRateCallback(jack_nframes_t sampleRate, void* context) noexcept;
 
     int process(jack_nframes_t nframes) noexcept;
     int syncTransport(jack_transport_state_t state, const jack_position_t& position) noexcept;
+    void updatePlaybackLatency(jack_latency_callback_mode_t mode) noexcept;
+    void publishPlaybackLatencyRanges(const jack_latency_range_t& left, const jack_latency_range_t& right) noexcept;
     void observeTransport(jack_transport_state_t state, const jack_position_t& position, bool authoritative) noexcept;
     bool shouldRenderTransportState(jack_transport_state_t state) const noexcept;
     void resetExpectedRenderFrame(jack_nframes_t frame) noexcept;
     void observeRenderedTransportBlock(jack_nframes_t frame, jack_nframes_t nframes) noexcept;
     void clearExpectedRenderFrame() noexcept;
     void synchronizeTransportEpoch() noexcept;
-    void publishPreparation(uint64_t generation, uint64_t token, jack_nframes_t frame) noexcept;
+    void publishPreparation(uint64_t generation, uint64_t token, jack_nframes_t frame,
+                            jack_nframes_t renderLeadFrames) noexcept;
     void publishObservation(TransportObservationKind kind, uint64_t token, jack_nframes_t frame,
                             bool authoritativeNewPosition) noexcept;
     void beginStartingEpisode(const JackTransportEpisodeTracker::StartingEpisode& episode) noexcept;
@@ -184,6 +190,11 @@ private:
     std::atomic<jack_nframes_t> m_expectedRenderFrame { 0 };
     std::atomic<jack_nframes_t> m_transportFrameMismatchExpected { 0 };
     std::atomic<jack_nframes_t> m_transportFrameMismatchObserved { 0 };
+    std::atomic<jack_nframes_t> m_leftPlaybackLatencyMin { 0 };
+    std::atomic<jack_nframes_t> m_leftPlaybackLatencyMax { 0 };
+    std::atomic<jack_nframes_t> m_rightPlaybackLatencyMin { 0 };
+    std::atomic<jack_nframes_t> m_rightPlaybackLatencyMax { 0 };
+    std::atomic<jack_nframes_t> m_playbackLatencyLead { 0 };
 
     std::atomic<uint64_t> m_transportGeneration { 0 };
     std::atomic<bool> m_transportRequested { false };
@@ -193,6 +204,7 @@ private:
     std::atomic<uint64_t> m_currentPreparationGeneration { 0 };
     std::atomic<uint64_t> m_currentPreparationToken { 0 };
     std::atomic<jack_nframes_t> m_currentPreparationFrame { 0 };
+    std::atomic<jack_nframes_t> m_currentPreparationRenderLeadFrames { 0 };
     std::atomic<uint64_t> m_mainActivatedPreparationToken { 0 };
     std::atomic<uint64_t> m_completionGeneration { 0 };
     std::atomic<uint64_t> m_completionToken { 0 };

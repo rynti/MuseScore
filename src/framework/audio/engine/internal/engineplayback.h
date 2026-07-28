@@ -89,7 +89,7 @@ public:
     void clearSources() override;
 
     // 3. Play Sequence
-    async::Promise<Ret> prepareToPlay(TrackSequenceId sequenceId) override;
+    async::Promise<Ret> prepareToPlay(TrackSequenceId sequenceId, secs_t renderLead = 0.0) override;
 
     void play(TrackSequenceId sequenceId, const secs_t delay = 0.0) override;
     void seek(TrackSequenceId sequenceId, const secs_t newPosition, const bool flushSound = true) override;

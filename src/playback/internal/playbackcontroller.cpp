@@ -905,6 +905,14 @@ void PlaybackController::onTransportSyncStateChanged()
         cancelTransportPreparation(true);
         clearPendingUserTransportAction();
     }
+
+    if ((wasEffective && !isEffective)
+        || state == AudioDriverTransportSyncState::Off
+        || state == AudioDriverTransportSyncState::Unavailable) {
+        if (const IPlayerPtr player = currentPlayer()) {
+            (void)player->prepareToPlay(0.0);
+        }
+    }
 }
 
 void PlaybackController::onTransportEvent(const AudioDriverTransportEvent& event)
@@ -1025,7 +1033,7 @@ void PlaybackController::prepareForTransport(const AudioDriverTransportEvent& ev
     player->seek(position);
 
     m_transportPrepareReceiver.async_disconnectAll();
-    Promise<Ret> preparation = player->prepareToPlay();
+    Promise<Ret> preparation = player->prepareToPlay(event.renderLead);
     preparation.onResolve(&m_transportPrepareReceiver, [this, context](const Ret& ret) {
         if (!ret || !isTransportPreparationCurrent(context)) {
             finishTransportPreparation(context, false);
@@ -1408,6 +1416,9 @@ mu::project::IProjectAudioSettingsPtr PlaybackController::audioSettings() const
 void PlaybackController::resetCurrentSequence()
 {
     cancelTransportPlaybackWork();
+    if (const IPlayerPtr player = currentPlayer()) {
+        (void)player->prepareToPlay(0.0);
+    }
 
     if (currentPlayer()) {
         currentPlayer()->playbackPositionChanged().disconnect(this);
@@ -1697,6 +1708,9 @@ void PlaybackController::setupNewCurrentSequence(const TrackSequenceId sequenceI
     m_onlineSoundsController->setCurrentSequence(sequenceId);
     m_player = playback()->player(sequenceId);
     globalContext()->setCurrentPlayer(m_player);
+    if (m_player) {
+        (void)m_player->prepareToPlay(0.0);
+    }
 
     m_desiredPlaybackPosition = m_player ? clampPlaybackPosition(m_player->playbackPosition()) : secs_t { 0.0 };
     m_pendingDesiredPlaybackPosition.reset();

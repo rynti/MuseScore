@@ -182,7 +182,7 @@ enum class AudioResourceType {
     AudioUnit,
 };
 
-static const std::map<AudioResourceType, QString> RESOURCE_TYPE_MAP = {
+inline const std::map<AudioResourceType, QString> RESOURCE_TYPE_MAP = {
     { AudioResourceType::Undefined, "undefined" },
     { AudioResourceType::MuseSamplerSoundPack, "muse_sampler_sound_pack" },
     { AudioResourceType::FluidSoundfont, "fluid_soundfont" },
@@ -466,6 +466,7 @@ struct AudioDriverTransportEvent {
     uint64_t driverGeneration = 0;
     uint64_t token = 0;
     secs_t position = 0.0;
+    secs_t renderLead = 0.0;
     std::string message;
 };
 

@@ -24,7 +24,10 @@ set(MODULE_TEST_SRC
     ${CMAKE_CURRENT_LIST_DIR}/rpcpacker_tests.cpp
     ${CMAKE_CURRENT_LIST_DIR}/alignbuffer_tests.cpp
     ${CMAKE_CURRENT_LIST_DIR}/jacktransportepisodetracker_tests.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/sequenceplayer_renderlead_tests.cpp
 )
+
+set(MODULE_TEST_LINK muse_audio_engine)
 
 include(SetupGTest)
 

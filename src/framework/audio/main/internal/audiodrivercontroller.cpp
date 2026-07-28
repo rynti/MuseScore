@@ -137,13 +137,14 @@ void AudioDriverController::setTransportSyncState(AudioDriverTransportSyncState 
 }
 
 void AudioDriverController::sendTransportEvent(AudioDriverTransportEventType type, uint64_t token, secs_t position,
-                                               const std::string& message)
+                                               const std::string& message, secs_t renderLead)
 {
     AudioDriverTransportEvent event;
     event.type = type;
     event.driverGeneration = m_driverGeneration;
     event.token = token;
     event.position = position;
+    event.renderLead = renderLead;
     event.message = message;
     m_transportEvent.send(event);
 }
@@ -511,7 +512,8 @@ void AudioDriverController::pollJackTransport()
         m_pendingPauseRequest = false;
 
         sendTransportEvent(AudioDriverTransportEventType::Prepare, preparation.token,
-                           transportFrameToSeconds(preparation.frame));
+                           transportFrameToSeconds(preparation.frame), {},
+                           transportFrameToSeconds(preparation.renderLeadFrames));
     }
 
     JackAudioDriver::TransportObservation observation;

@@ -86,6 +86,25 @@ public:
     {
         return JackAudioDriver::xrunCallback(&driver);
     }
+
+    static void publishPlaybackLatencyRanges(JackAudioDriver& driver,
+                                             jack_nframes_t leftMin, jack_nframes_t leftMax,
+                                             jack_nframes_t rightMin, jack_nframes_t rightMax)
+    {
+        const jack_latency_range_t left { leftMin, leftMax };
+        const jack_latency_range_t right { rightMin, rightMax };
+        driver.publishPlaybackLatencyRanges(left, right);
+    }
+
+    static jack_nframes_t cachedPlaybackLatencyLead(const JackAudioDriver& driver)
+    {
+        return driver.m_playbackLatencyLead.load(std::memory_order_acquire);
+    }
+
+    static jack_nframes_t currentPreparationRenderLead(const JackAudioDriver& driver)
+    {
+        return driver.m_currentPreparationRenderLeadFrames.load(std::memory_order_relaxed);
+    }
 };
 }
 
@@ -160,6 +179,75 @@ TEST(JackAudioDriverCallbackTests, StartingPublishesOnePreparationAndProcessObse
     EXPECT_FALSE(driver.takeTransportObservation(stopped));
 }
 
+TEST(JackAudioDriverCallbackTests, PlaybackLatencyIsSnapshottedPerStartingEpisode)
+{
+    JackAudioDriver driver;
+    JackAudioDriverTestAccess::prime(driver, GENERATION);
+
+    JackAudioDriverTestAccess::publishPlaybackLatencyRanges(driver, 0, 0, 0, 0);
+    const JackAudioDriver::TransportPreparation zeroLead = beginStartingEpisode(driver, 3000);
+    EXPECT_EQ(zeroLead.renderLeadFrames, 0u);
+
+    driver.cancelPendingTransportWork();
+    JackAudioDriverTestAccess::publishPlaybackLatencyRanges(driver, 10, 80, 20, 60);
+    const JackAudioDriver::TransportPreparation first = beginStartingEpisode(driver, 4000);
+    EXPECT_EQ(first.renderLeadFrames, 80u);
+    EXPECT_EQ(JackAudioDriverTestAccess::cachedPlaybackLatencyLead(driver), 80u);
+
+    JackAudioDriverTestAccess::publishPlaybackLatencyRanges(driver, 30, 90, 40, 120);
+    EXPECT_EQ(JackAudioDriverTestAccess::cachedPlaybackLatencyLead(driver), 120u);
+    EXPECT_EQ(JackAudioDriverTestAccess::currentPreparationRenderLead(driver), 80u);
+
+    completeSuccessfulPreparation(driver, first);
+    ASSERT_EQ(JackAudioDriverTestAccess::synchronize(driver, JackTransportRolling, first.frame), 1);
+    ASSERT_EQ(JackAudioDriverTestAccess::synchronize(driver, JackTransportStarting, 5000), 0);
+
+    JackAudioDriver::TransportPreparation relocated;
+    ASSERT_TRUE(driver.takePendingTransportPreparation(relocated));
+    EXPECT_EQ(relocated.generation, GENERATION);
+    EXPECT_NE(relocated.token, 0u);
+    EXPECT_NE(relocated.token, first.token);
+    EXPECT_EQ(relocated.frame, 5000u);
+    EXPECT_EQ(relocated.renderLeadFrames, 120u);
+}
+
+TEST(JackAudioDriverCallbackTests, MaximumPlaybackLatencySurvivesPreparationPublication)
+{
+    JackAudioDriver driver;
+    JackAudioDriverTestAccess::prime(driver, GENERATION);
+    constexpr jack_nframes_t maximum = std::numeric_limits<jack_nframes_t>::max();
+    JackAudioDriverTestAccess::publishPlaybackLatencyRanges(driver, maximum - 1, maximum - 1, maximum, maximum);
+
+    const JackAudioDriver::TransportPreparation preparation = beginStartingEpisode(driver, maximum);
+    EXPECT_EQ(preparation.generation, GENERATION);
+    EXPECT_NE(preparation.token, 0u);
+    EXPECT_EQ(preparation.frame, maximum);
+    EXPECT_EQ(preparation.renderLeadFrames, maximum);
+}
+
+TEST(JackAudioDriverCallbackTests, CancellationAndDriverInvalidationClearEpisodeLead)
+{
+    JackAudioDriver driver;
+    JackAudioDriverTestAccess::prime(driver, GENERATION);
+    JackAudioDriverTestAccess::publishPlaybackLatencyRanges(driver, 0, 64, 0, 32);
+
+    const JackAudioDriver::TransportPreparation preparation = beginStartingEpisode(driver, 6000);
+    ASSERT_EQ(preparation.renderLeadFrames, 64u);
+
+    driver.completeTransportPreparation(GENERATION + 1, preparation.token, false);
+    EXPECT_EQ(JackAudioDriverTestAccess::currentPreparationRenderLead(driver), 64u);
+
+    driver.cancelPendingTransportWork();
+    EXPECT_EQ(JackAudioDriverTestAccess::currentPreparationRenderLead(driver), 0u);
+    EXPECT_FALSE(driver.isTransportPreparationCurrent(preparation.generation, preparation.token));
+
+    const JackAudioDriver::TransportPreparation replacement = beginStartingEpisode(driver, 7000);
+    ASSERT_EQ(replacement.renderLeadFrames, 64u);
+    driver.configureTransport(GENERATION + 1, true);
+    EXPECT_EQ(JackAudioDriverTestAccess::currentPreparationRenderLead(driver), 0u);
+    EXPECT_FALSE(driver.isTransportPreparationCurrent(replacement.generation, replacement.token));
+}
+
 TEST(JackAudioDriverCallbackTests, StaleCompletionIsIgnoredAndActivatedSuccessEnablesRolling)
 {
     JackAudioDriver driver;
@@ -186,18 +274,22 @@ TEST(JackAudioDriverCallbackTests, StaleCompletionIsIgnoredAndActivatedSuccessEn
     EXPECT_FALSE(driver.takeTransportObservation(observation));
 }
 
-TEST(JackAudioDriverCallbackTests, FailedPreparationReleasesButDoesNotEnableRolling)
+TEST(JackAudioDriverCallbackTests, FailedPreparationClearsEpisodeAndDoesNotEnableRolling)
 {
     JackAudioDriver driver;
     JackAudioDriverTestAccess::prime(driver, GENERATION);
+    JackAudioDriverTestAccess::publishPlaybackLatencyRanges(driver, 0, 96, 0, 48);
     const JackAudioDriver::TransportPreparation preparation = beginStartingEpisode(driver, 4800);
     ASSERT_NE(preparation.token, 0);
+    ASSERT_EQ(preparation.renderLeadFrames, 96u);
 
     ASSERT_TRUE(driver.activateTransportForPreparation(preparation.generation, preparation.token));
     driver.completeTransportPreparation(preparation.generation, preparation.token, false);
     EXPECT_EQ(JackAudioDriverTestAccess::synchronize(driver, JackTransportStarting, preparation.frame), 1);
-    EXPECT_EQ(JackAudioDriverTestAccess::releasedToken(driver), preparation.token);
+    EXPECT_EQ(JackAudioDriverTestAccess::releasedToken(driver), 0);
     EXPECT_EQ(JackAudioDriverTestAccess::renderEligibleToken(driver), 0);
+    EXPECT_EQ(JackAudioDriverTestAccess::currentPreparationRenderLead(driver), 0u);
+    EXPECT_FALSE(driver.isTransportPreparationCurrent(preparation.generation, preparation.token));
 
     EXPECT_EQ(JackAudioDriverTestAccess::synchronize(driver, JackTransportRolling, preparation.frame), 1);
 
@@ -205,7 +297,7 @@ TEST(JackAudioDriverCallbackTests, FailedPreparationReleasesButDoesNotEnableRoll
     ASSERT_TRUE(driver.takeTransportObservation(observation));
     EXPECT_EQ(observation.kind, JackAudioDriver::TransportObservationKind::RollingUnprepared);
     EXPECT_EQ(observation.generation, GENERATION);
-    EXPECT_EQ(observation.token, preparation.token);
+    EXPECT_EQ(observation.token, 0u);
     EXPECT_EQ(observation.frame, preparation.frame);
     EXPECT_EQ(JackAudioDriverTestAccess::renderEligibleToken(driver), 0);
 }
@@ -284,14 +376,18 @@ TEST(JackAudioDriverCallbackTests, FailedPreparationRemainsSilentAtFirstRolling)
     EXPECT_FALSE(JackAudioDriverTestAccess::shouldRenderTransportState(driver, JackTransportRolling));
 }
 
-TEST(JackAudioDriverCallbackTests, PreparedFirstRollingAndContiguousPeriodsRemainContinuous)
+TEST(JackAudioDriverCallbackTests, RenderLeadPreservesStartingSilenceAndLogicalFrameContinuity)
 {
     constexpr jack_nframes_t frame = 12000;
     constexpr jack_nframes_t period = 256;
+    constexpr jack_nframes_t renderLead = 6160;
 
     JackAudioDriver driver;
     JackAudioDriverTestAccess::prime(driver, GENERATION);
+    JackAudioDriverTestAccess::publishPlaybackLatencyRanges(driver, 0, renderLead, 0, renderLead - 16);
     const JackAudioDriver::TransportPreparation preparation = beginStartingEpisode(driver, frame);
+    ASSERT_EQ(preparation.renderLeadFrames, renderLead);
+    EXPECT_FALSE(JackAudioDriverTestAccess::shouldRenderTransportState(driver, JackTransportStarting));
     completeSuccessfulPreparation(driver, preparation);
 
     ASSERT_TRUE(JackAudioDriverTestAccess::shouldRenderTransportState(driver, JackTransportRolling));
