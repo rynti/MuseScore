@@ -40,9 +40,21 @@ int AudioMidiPreferencesModel::currentAudioApiIndex() const
     return audioApiList().indexOf(currentApi);
 }
 
+bool AudioMidiPreferencesModel::audioApiSelectionEnabled() const
+{
+#if defined(MUSE_MODULE_AUDIO_JACK) && defined(Q_OS_LINUX)
+    const mu::context::IPlaybackStatePtr playbackState = globalContext()->playbackState();
+    return playbackState && playbackState->playbackStatus() == PlaybackStatus::Stopped;
+#else
+    return true;
+#endif
+}
+
 void AudioMidiPreferencesModel::setCurrentAudioApiIndex(int index)
 {
-    if (index == currentAudioApiIndex()) {
+    if (!audioApiSelectionEnabled()) {
+        interactive()->warning("", muse::trc("preferences", "Stop playback before changing the audio driver."));
+        emit currentAudioApiIndexChanged(currentAudioApiIndex());
         return;
     }
 
@@ -51,31 +63,66 @@ void AudioMidiPreferencesModel::setCurrentAudioApiIndex(int index)
         return;
     }
 
-    std::string fallbackApi = audioDriverController()->currentAudioApi();
+    const std::string requestedApi = apiList.at(index);
+    if (requestedApi == audioDriverController()->currentAudioApi()) {
+        return;
+    }
 
-    audioDriverController()->availableOutputDevicesChanged().onNotify(this, [this, fallbackApi]() {
-        audioDriverController()->availableOutputDevicesChanged().disconnect(this);
+    m_reconcilingAudioApi = true;
+    const bool switched = audioDriverController()->changeCurrentAudioApi(requestedApi);
+    const std::string actualApi = audioDriverController()->currentAudioApi();
+    audioConfiguration()->setCurrentAudioApi(actualApi);
+    m_reconcilingAudioApi = false;
 
-        if (!audioDriverController()->availableOutputDevices().empty()) {
-            return;
-        }
+    emit currentAudioApiIndexChanged(currentAudioApiIndex());
 
-        auto promise = interactive()->warning(
-            muse::trc("preferences", "No audio devices available"),
-            muse::qtrc("preferences", "The selected audio driver does not have any available audio devices. "
-                                      "MuseScore Studio will use the default audio driver instead. "
-                                      "To use %1, ensure your hardware is set up correctly, "
-                                      "then restart MuseScore Studio and try again.")
-            .arg(QString::fromStdString(audioDriverController()->currentAudioApi())).toStdString());
+    if (!switched) {
+        showAudioApiSwitchError(requestedApi);
+    }
+}
 
-        promise.onResolve(this, [this, fallbackApi](const muse::IInteractive::Result&) {
-            audioDriverController()->changeCurrentAudioApi(fallbackApi);
-            emit currentAudioApiIndexChanged(currentAudioApiIndex());
-        });
-    }, Asyncable::Mode::SetReplace);
+void AudioMidiPreferencesModel::showAudioApiSwitchError(const std::string& requestedApi) const
+{
+    interactive()->error(
+        "",
+        muse::qtrc("preferences", "The %1 audio driver could not be opened. MuseScore Studio restored %2.")
+        .arg(QString::fromStdString(requestedApi), QString::fromStdString(audioDriverController()->currentAudioApi())).toStdString());
+}
 
-    audioDriverController()->changeCurrentAudioApi(apiList.at(index));
-    emit currentAudioApiIndexChanged(index);
+void AudioMidiPreferencesModel::reconcilePreferredAudioApi()
+{
+#if defined(MUSE_MODULE_AUDIO_JACK) && defined(Q_OS_LINUX)
+    if (m_reconcilingAudioApi) {
+        return;
+    }
+
+    const std::string preferredApi = audioConfiguration()->currentAudioApi();
+    if (preferredApi == audioDriverController()->currentAudioApi()) {
+        return;
+    }
+
+    if (!audioApiSelectionEnabled()) {
+        emit currentAudioApiIndexChanged(currentAudioApiIndex());
+        interactive()->warning(
+            "",
+            muse::trc("preferences", "The audio driver cannot be changed during playback. The saved driver will be used after restart."));
+        return;
+    }
+
+    m_reconcilingAudioApi = true;
+    const bool switched = audioDriverController()->changeCurrentAudioApi(preferredApi);
+    const std::string actualApi = audioDriverController()->currentAudioApi();
+    if (audioConfiguration()->currentAudioApi() != actualApi) {
+        audioConfiguration()->setCurrentAudioApi(actualApi);
+    }
+    m_reconcilingAudioApi = false;
+
+    emit currentAudioApiIndexChanged(currentAudioApiIndex());
+
+    if (!switched) {
+        showAudioApiSwitchError(preferredApi);
+    }
+#endif
 }
 
 QString AudioMidiPreferencesModel::midiInputDeviceId() const
@@ -100,6 +147,19 @@ void AudioMidiPreferencesModel::outputDeviceSelected(const QString& deviceId)
 
 void AudioMidiPreferencesModel::init()
 {
+#if defined(MUSE_MODULE_AUDIO_JACK) && defined(Q_OS_LINUX)
+    const mu::context::IPlaybackStatePtr playbackState = globalContext()->playbackState();
+    if (playbackState) {
+        playbackState->playbackStatusChanged().onReceive(this, [this](PlaybackStatus) {
+            emit audioApiSelectionEnabledChanged();
+        });
+    }
+
+    audioConfiguration()->currentAudioApiChanged().onNotify(this, [this]() {
+        reconcilePreferredAudioApi();
+    });
+#endif
+
     midiInPort()->availableDevicesChanged().onNotify(this, [this]() {
         emit midiInputDevicesChanged();
     });

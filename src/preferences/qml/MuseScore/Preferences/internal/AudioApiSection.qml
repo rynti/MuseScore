@@ -30,6 +30,7 @@ BaseSection {
 
     property int currentAudioApiIndex: -1
     property var audioApiList: null
+    property bool audioApiSelectionEnabled: true
 
     signal currentAudioApiIndexChangeRequested(int newIndex)
 
@@ -43,6 +44,7 @@ BaseSection {
             columnWidth: root.columnWidth
 
             visible: root.audioApiList.length > 1
+            enabled: root.audioApiSelectionEnabled
 
             currentIndex: root.currentAudioApiIndex
             model: root.audioApiList

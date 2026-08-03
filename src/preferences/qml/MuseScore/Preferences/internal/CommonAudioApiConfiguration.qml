@@ -70,6 +70,7 @@ Item {
 
             title: qsTrc("preferences", "Buffer size")
             columnWidth: root.columnWidth
+            enabled: !apiModel.isJackAudioApi
 
             currentIndex: indexOfValue(apiModel.bufferSize)
             model: apiModel.bufferSizeList
@@ -88,6 +89,7 @@ Item {
 
             title: qsTrc("preferences", "Sample rate")
             columnWidth: root.columnWidth
+            enabled: !apiModel.isJackAudioApi
 
             currentIndex: indexOfValue(apiModel.sampleRate)
             model: apiModel.sampleRateList
@@ -101,6 +103,42 @@ Item {
             }
 
             visible: Qt.platform.os === "linux"
+        }
+
+        StyledTextLabel {
+            width: parent.width
+            visible: apiModel.isJackAudioApi
+
+            horizontalAlignment: Text.AlignLeft
+            wrapMode: Text.WordWrap
+
+            text: qsTrc("preferences", "Sample rate and buffer size are controlled by the JACK server.")
+        }
+
+        CheckBox {
+            width: parent.width
+            visible: apiModel.isJackAudioApi
+
+            text: qsTrc("preferences", "Use JACK transport")
+            checked: apiModel.useJackTransport
+
+            navigation.name: "UseJackTransportCheckBox"
+            navigation.panel: root.navigation
+            navigation.row: root.navigationOrderStart + 3
+
+            onClicked: {
+                apiModel.useJackTransport = !checked
+            }
+        }
+
+        StyledTextLabel {
+            width: parent.width
+            visible: apiModel.isJackAudioApi
+
+            horizontalAlignment: Text.AlignLeft
+            wrapMode: Text.WordWrap
+
+            text: apiModel.jackTransportStatusText
         }
     }
 }

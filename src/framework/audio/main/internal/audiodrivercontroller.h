@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <optional>
+
 #include "global/async/asyncable.h"
 
 #include "audio/iaudiodrivercontroller.h"
@@ -31,6 +33,8 @@
 #include "audio/common/rpc/irpcchannel.h"
 
 namespace muse::audio {
+class JackAudioDriver;
+
 class AudioDriverController : public IAudioDriverController, public Contextable, public async::Asyncable
 {
     GlobalInject<IAudioConfiguration> configuration;
@@ -40,11 +44,14 @@ public:
     AudioDriverController(const modularity::ContextPtr& iocCtx)
         : Contextable(iocCtx) {}
 
+    void init();
+    void poll();
+
     // Api
     std::vector<std::string> availableAudioApiList() const override;
 
     std::string currentAudioApi() const override;
-    void changeCurrentAudioApi(const std::string& name) override;
+    bool changeCurrentAudioApi(const std::string& name) override;
     async::Notification currentAudioApiChanged() const override;
 
     // Current driver operation
@@ -70,13 +77,53 @@ public:
     void changeSampleRate(sample_rate_t sampleRate) override;
     async::Notification outputDeviceSampleRateChanged() const override;
 
+    bool isTransportSyncAvailable() const override;
+    bool transportSyncRequested() const override;
+    AudioDriverTransportSyncState transportSyncState() const override;
+    async::Notification transportSyncStateChanged() const override;
+    async::Channel<AudioDriverTransportEvent> transportEvent() const override;
+
+    void setTransportSyncEnabled(bool enabled) override;
+    bool requestTransportPlay(secs_t position) override;
+    bool requestTransportPause() override;
+    bool requestTransportStop() override;
+    bool requestTransportSeek(secs_t position) override;
+
+    bool isTransportPreparationCurrent(uint64_t driverGeneration, uint64_t token) const override;
+    bool activateTransportForPreparation(uint64_t driverGeneration, uint64_t token) override;
+    bool completeTransportPreparation(uint64_t driverGeneration, uint64_t token, bool success) override;
+    void cancelPendingTransportWork() override;
+
 private:
+    struct OpenedDriver {
+        IAudioDriverPtr driver;
+        IAudioDriver::Spec spec;
+        uint64_t generation = 0;
+    };
+
+    std::string canonicalAudioApi(const std::string& name) const;
     IAudioDriverPtr createDriver(const std::string& name) const;
+    bool tryOpenDriver(const std::string& name, const IAudioDriver::Spec& spec, bool tryDefaultDevice, OpenedDriver& result);
+    void installOpenedDriver(const OpenedDriver& openedDriver, const std::string& previousApi = {});
     void setNewDriver(IAudioDriverPtr newDriver);
+    void publishActiveSpec(const IAudioDriver::Spec& spec);
 
     void handleOutputDeviceChange();
     bool switchToDefaultAudioDriver(IAudioDriver::Spec* activeSpec = nullptr);
-    void updateOutputSpec();
+    void updateOutputSpec(const OutputSpec& spec);
+
+    JackAudioDriver* jackDriver() const;
+    uint64_t nextDriverGeneration();
+    void configureTransportBeforeOpen(const IAudioDriverPtr& driver, uint64_t generation);
+    void resetTransportForDriverChange();
+    void applyRequestedTransportState();
+    void setTransportSyncState(AudioDriverTransportSyncState state);
+    void sendTransportEvent(AudioDriverTransportEventType type, uint64_t token = 0, secs_t position = 0.0,
+                            const std::string& message = {});
+    void pollJackTransport();
+    void pollJackStatus();
+    uint64_t secondsToTransportFrame(secs_t position) const;
+    secs_t transportFrameToSeconds(uint64_t frame) const;
 
     IAudioDriver::Callback m_callback;
     IAudioDriverPtr m_audioDriver;
@@ -86,6 +133,19 @@ private:
     async::Notification m_outputDeviceChanged;
     async::Notification m_outputDeviceBufferSizeChanged;
     async::Notification m_outputDeviceSampleRateChanged;
+
+    async::Notification m_transportSyncStateChanged;
+    async::Channel<AudioDriverTransportEvent> m_transportEvent;
+
+    AudioDriverTransportSyncState m_transportSyncState = AudioDriverTransportSyncState::Off;
+    uint64_t m_nextDriverGeneration = 1;
+    uint64_t m_driverGeneration = 0;
+    uint64_t m_preparationToken = 0;
+    std::optional<uint64_t> m_pendingLocalTransportFrame;
+    bool m_pendingStopRequest = false;
+    bool m_pendingPauseRequest = false;
+    bool m_transportConfigurationGuard = false;
+    bool m_jackRuntimeFaulted = false;
 
     bool m_retryOpenDevice = false;
 };
