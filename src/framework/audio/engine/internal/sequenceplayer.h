@@ -34,6 +34,7 @@
 #include "igettracks.h"
 
 namespace muse::audio::engine {
+class SequencePlayerTestAccess;
 class SequencePlayer : public ISequencePlayer, public Contextable, public async::Asyncable
 {
     ContextInject<engine::IAudioEngine> audioEngine = { this };
@@ -62,6 +63,7 @@ public:
     async::Channel<secs_t> playbackPositionChanged() const override;
 
 private:
+    friend class SequencePlayerTestAccess;
     void seekAllTracks(const msecs_t newPositionMsecs, bool flushSound);
     void flushAllTracks();
 
