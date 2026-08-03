@@ -185,6 +185,7 @@ void Mixer::setOutputSpec(const OutputSpec& spec)
 {
     ONLY_AUDIO_ENGINE_THREAD;
 
+    m_clockTimeConverter.reset();
     m_outputSpec = spec;
 
     AbstractAudioSource::setOutputSpec(spec);
@@ -216,7 +217,7 @@ msecs_t Mixer::playbackPosition() const
     }
 
     const IClockPtr clock = *m_clocks.begin();
-    return renderPosition(clock->currentTime());
+    return clock->currentTime();
 }
 
 samples_t Mixer::playbackPositionSamples() const
@@ -235,22 +236,13 @@ samples_t Mixer::playbackPositionSamples() const
     return static_cast<samples_t>(samples);
 }
 
-msecs_t Mixer::renderPosition(msecs_t logicalPosition) const
-{
-    constexpr msecs_t maximum = std::numeric_limits<msecs_t>::max();
-    if (logicalPosition >= maximum - m_renderLead) {
-        return maximum;
-    }
-
-    return logicalPosition + m_renderLead;
-}
-
 samples_t Mixer::process(float* outBuffer, samples_t samplesPerChannel)
 {
     ONLY_AUDIO_ENGINE_THREAD;
 
+    const msecs_t nextMicroseconds = m_clockTimeConverter.advance(samplesPerChannel, m_outputSpec.sampleRate);
     for (const IClockPtr& clock : m_clocks) {
-        clock->forward((samplesPerChannel * 1000000) / m_outputSpec.sampleRate);
+        clock->forward(nextMicroseconds);
     }
 
     size_t outBufferSize = samplesPerChannel * m_outputSpec.audioChannelCount;
@@ -405,6 +397,7 @@ void Mixer::addClock(IClockPtr clock)
 {
     ONLY_AUDIO_ENGINE_THREAD;
 
+    m_clockTimeConverter.reset();
     m_clocks.insert(std::move(clock));
 }
 
@@ -413,15 +406,13 @@ void Mixer::removeClock(IClockPtr clock)
     ONLY_AUDIO_ENGINE_THREAD;
 
     m_clocks.erase(clock);
-    if (m_clocks.empty()) {
-        m_renderLead = 0;
-    }
+    m_clockTimeConverter.reset();
 }
 
-void Mixer::setRenderLead(msecs_t renderLead)
+void Mixer::resetClockTimeConversion()
 {
     ONLY_AUDIO_ENGINE_THREAD;
-    m_renderLead = std::max<msecs_t>(0, renderLead);
+    m_clockTimeConverter.reset();
 }
 
 AudioOutputParams Mixer::masterOutputParams() const

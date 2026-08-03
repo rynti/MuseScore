@@ -22,9 +22,6 @@
 
 #include "sequenceplayer.h"
 
-#include <cmath>
-#include <limits>
-
 #include "audio/common/audiosanitizer.h"
 
 #include "log.h"
@@ -44,6 +41,7 @@ SequencePlayer::SequencePlayer(IGetTracks* getTracks, IClockPtr clock, const mod
             return;
         }
 
+        audioEngine()->mixer()->resetClockTimeConversion();
         if (m_tracksFollowClockSeek) {
             seekAllTracks(m_clock->currentTime(), true /*flushSound*/);
         }
@@ -77,10 +75,9 @@ SequencePlayer::~SequencePlayer()
     m_clock->setOnAction(nullptr);
 }
 
-async::Promise<Ret> SequencePlayer::prepareToPlay(secs_t renderLead)
+async::Promise<Ret> SequencePlayer::prepareToPlay()
 {
     ONLY_AUDIO_ENGINE_THREAD;
-    applyRenderLead(renderLead);
 
     return async::make_promise<Ret>([this](auto resolve, auto) {
         prepareAllTracksToPlay([resolve]() {
@@ -89,13 +86,6 @@ async::Promise<Ret> SequencePlayer::prepareToPlay(secs_t renderLead)
 
         return Promise<Ret>::dummy_result();
     });
-}
-
-void SequencePlayer::applyRenderLead(secs_t renderLead)
-{
-    m_renderLead = renderLeadMicroseconds(renderLead);
-    audioEngine()->mixer()->setRenderLead(m_renderLead);
-    seekAllTracks(m_clock->currentTime(), true);
 }
 
 void SequencePlayer::play(const secs_t delay)
@@ -117,6 +107,7 @@ void SequencePlayer::seek(const secs_t newPosition, const bool flushSound)
     ONLY_AUDIO_ENGINE_THREAD;
 
     msecs_t newPos = secsToMicrosecs(newPosition);
+    audioEngine()->mixer()->resetClockTimeConversion();
     m_tracksFollowClockSeek = false;
     m_clock->seek(newPos);
     m_tracksFollowClockSeek = true;
@@ -223,32 +214,6 @@ Channel<PlaybackStatus> SequencePlayer::playbackStatusChanged() const
     return m_clock->statusChanged();
 }
 
-msecs_t SequencePlayer::renderLeadMicroseconds(secs_t renderLead)
-{
-    const double seconds = renderLead.to_double();
-    if (!std::isfinite(seconds) || seconds <= 0.0) {
-        return 0;
-    }
-
-    constexpr msecs_t maximum = std::numeric_limits<msecs_t>::max();
-    constexpr double maximumSeconds = static_cast<double>(maximum) / 1000000.0;
-    if (seconds >= maximumSeconds) {
-        return maximum;
-    }
-
-    return static_cast<msecs_t>(seconds * 1000000.0);
-}
-
-msecs_t SequencePlayer::renderPosition(msecs_t logicalPosition) const
-{
-    constexpr msecs_t maximum = std::numeric_limits<msecs_t>::max();
-    if (logicalPosition >= maximum - m_renderLead) {
-        return maximum;
-    }
-
-    return logicalPosition + m_renderLead;
-}
-
 void SequencePlayer::seekAllTracks(const msecs_t newPositionMsecs, bool flushSound)
 {
     IF_ASSERT_FAILED(m_getTracks) {
@@ -257,7 +222,7 @@ void SequencePlayer::seekAllTracks(const msecs_t newPositionMsecs, bool flushSou
 
     for (const auto& pair : m_getTracks->allTracks()) {
         if (pair.second->inputHandler) {
-            pair.second->inputHandler->seek(renderPosition(newPositionMsecs), flushSound);
+            pair.second->inputHandler->seek(newPositionMsecs, flushSound);
         }
     }
 }
@@ -283,6 +248,15 @@ void SequencePlayer::prepareAllTracksToPlay(AllTracksReadyCallback allTracksRead
         return;
     }
 
+    auto reanchorAndNotify = [this, allTracksReadyCallback]() {
+        // Preparation can complete asynchronously, and another locate can
+        // update the clock in the meantime. Anchor every current source to the
+        // latest logical position immediately before reporting ready.
+        audioEngine()->mixer()->resetClockTimeConversion();
+        seekAllTracks(m_clock->currentTime(), true);
+        allTracksReadyCallback();
+    };
+
     std::vector<TrackPtr> notYetReadyToPlayTracks;
     m_notYetReadyToPlayTrackIdSet.clear();
 
@@ -300,18 +274,18 @@ void SequencePlayer::prepareAllTracksToPlay(AllTracksReadyCallback allTracksRead
     }
 
     if (notYetReadyToPlayTracks.empty()) {
-        allTracksReadyCallback();
+        reanchorAndNotify();
         return;
     }
 
     for (const TrackPtr& track : notYetReadyToPlayTracks) {
         const TrackId trackId = track->id;
 
-        track->inputHandler->readyToPlayChanged().onNotify(this, [this, trackId, allTracksReadyCallback]() {
+        track->inputHandler->readyToPlayChanged().onNotify(this, [this, trackId, reanchorAndNotify]() {
             muse::remove(m_notYetReadyToPlayTrackIdSet, trackId);
 
             if (m_notYetReadyToPlayTrackIdSet.empty()) {
-                allTracksReadyCallback();
+                reanchorAndNotify();
             }
 
             const TrackPtr ptr = m_getTracks->track(trackId);

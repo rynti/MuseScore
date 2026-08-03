@@ -29,10 +29,12 @@ your PipeWire setup. Do not run the raw build-tree executable.
    **JACK** as the audio driver.
 3. In Ardour, QJackCtl, Helvum, or another graph tool, connect
    `MuseScore:audio_out_left` and `MuseScore:audio_out_right` to the desired
-   playback or Ardour input ports. MuseScore intentionally does not create
-   graph connections itself. The client is normally named `MuseScore`; JACK
-   may append a unique-name suffix when that name is already occupied. The
-   `audio_out_left` and `audio_out_right` port basenames remain unchanged.
+   playback or Ardour input ports. For recording, connect them either directly
+   to a stereo track or to an Ardour input bus that feeds a stereo track.
+   MuseScore intentionally does not create graph connections itself. The client
+   is normally named `MuseScore`; JACK may append a unique-name suffix when
+   that name is already occupied. The `audio_out_left` and `audio_out_right`
+   port basenames remain unchanged.
 
 JACK owns the sample rate and period. Their values are shown read-only in
 MuseScore and must be changed in the JACK/PipeWire configuration.
@@ -58,6 +60,19 @@ settings. When the status reads active:
 Turn **Use JACK transport** off to keep JACK audio output but return MuseScore's
 playback controls to a local timeline.
 
+## Ardour recording alignment
+
+Start with Ardour's **Automatic** alignment. If a recording made directly from
+MuseScore's JACK output is emitted at the correct transport frame but Ardour
+places the region late, use **Align with Capture Time** for the affected Ardour
+track or bus route. Capture-time alignment is the supported fallback for both
+the direct-to-track and input-bus-to-track routes.
+
+Arm the recorder before starting the shared transport, or use pre-roll, when
+the complete attack of the first note matters. A recording that starts at the
+same instant as the transport may miss that first attack; following audio must
+still align normally.
+
 ## Minimal Ardour check
 
 Use a short score with a sharp first note or metronome click and an Ardour track
@@ -72,10 +87,17 @@ on the same timeline:
    zero.
 4. Repeat a few rapid locates and switch from JACK to another available backend
    and back while stopped.
-5. For timing qualification, compare the first transients after several starts
-   and the relative offset near the beginning and end of a ten-minute 48 kHz
-   run. Variation should stay within two JACK periods under normal load.
+5. For timing qualification, compare dry transients with a WAV exported from
+   the same score and placed exactly on Ardour's grid. Test periods 256, 1024,
+   2048, and 4096 at 48 kHz through both recording routes. Valid runs should be
+   within 1 ms at the start and drift by less than 1 ms over ten minutes, with
+   no offset proportional to the JACK period.
+
+An xrun or transport-frame discontinuity can make MuseScore silence the current
+and following rolling cycles instead of continuing out of sync. Stop and start
+the shared transport, or perform a locate, to prepare a fresh synchronized
+position. Discard timing measurements from runs that report either condition.
 
 If the JACK server exits, MuseScore silences the backend and marks transport
-unavailable. Restart/select an audio backend again; automatic reconnect is not
-part of this implementation.
+unavailable. Restart or select an audio backend again; automatic reconnect is
+not part of this implementation.

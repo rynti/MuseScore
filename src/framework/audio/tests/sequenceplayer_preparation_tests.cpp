@@ -17,7 +17,6 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -31,10 +30,6 @@
 namespace muse::audio::engine {
 class SequencePlayerTestAccess {
 public:
-  static void applyRenderLead(SequencePlayer &player, secs_t renderLead) {
-    player.applyRenderLead(renderLead);
-  }
-
   static void prepareTracks(SequencePlayer &player,
                             std::function<void()> onReady) {
     player.prepareAllTracksToPlay(std::move(onReady));
@@ -49,6 +44,11 @@ public:
 
   static void setMasterFx(Mixer &mixer, IFxProcessorPtr processor) {
     mixer.m_masterFxProcessors = {std::move(processor)};
+  }
+
+  static void setMuted(MixerChannel &channel, bool muted) {
+    channel.m_params.muted = muted;
+    channel.m_mutedChanged.notify();
   }
 };
 } // namespace muse::audio::engine
@@ -294,7 +294,7 @@ private:
   async::Channel<RenderMode> m_modeChanged;
 };
 
-class SequencePlayerRenderLeadTests : public ::testing::Test {
+class SequencePlayerPreparationTests : public ::testing::Test {
 protected:
   void SetUp() override {
     AudioSanitizer::setupEngineThread();
@@ -304,7 +304,7 @@ protected:
     m_engine = std::make_shared<FakeAudioEngine>(m_mixer);
 
     modularity::ioc(m_context)->registerExport<IAudioEngine>(
-        "render-lead-tests", m_engine);
+        "sequence-player-preparation-tests", m_engine);
 
     m_outputSpec.sampleRate = 48000;
     m_outputSpec.samplesPerChannel = 480;
@@ -342,75 +342,100 @@ protected:
   OutputSpec m_outputSpec;
 };
 
-TEST_F(SequencePlayerRenderLeadTests,
-       LogicalSeekUsesRenderLeadWhilePlayerPositionStaysLogical) {
+TEST_F(SequencePlayerPreparationTests,
+       ImmediatePreparationFlushesAndReanchorsAtLogicalPosition) {
   auto input = addTrack();
-  m_clock->relocate(1000000, IClock::ActionType::Seek);
-
-  SequencePlayerTestAccess::applyRenderLead(*m_player, 0.25);
-  ASSERT_FALSE(input->seeks.empty());
-  EXPECT_EQ(input->seeks.back().position, 1250000);
-  EXPECT_TRUE(input->seeks.back().flushSound);
-  EXPECT_DOUBLE_EQ(m_player->playbackPosition().to_double(), 1.0);
-
-  m_player->seek(2.0, false);
-  EXPECT_EQ(input->seeks.back().position, 2250000);
-  EXPECT_FALSE(input->seeks.back().flushSound);
-  EXPECT_DOUBLE_EQ(m_player->playbackPosition().to_double(), 2.0);
-}
-
-TEST_F(SequencePlayerRenderLeadTests,
-       PreparationReseeksBeforeReadinessAndDefaultRestoresZeroLead) {
-  auto input = addTrack();
-  input->ready = false;
-  m_clock->relocate(3000000, IClock::ActionType::Seek);
-
+  m_player->seek(3.0, true);
   input->events.clear();
-  SequencePlayerTestAccess::applyRenderLead(*m_player, 0.5);
-  bool ready = false;
-  SequencePlayerTestAccess::prepareTracks(*m_player,
-                                          [&ready]() { ready = true; });
-
-  ASSERT_GE(input->events.size(), 2u);
-  EXPECT_EQ(input->events[0], "seek");
-  EXPECT_EQ(input->events[1], "prepare");
-  EXPECT_EQ(input->seeks.back().position, 3500000);
-  EXPECT_FALSE(ready);
-
-  input->setReady(true);
-  EXPECT_TRUE(ready);
-
-  SequencePlayerTestAccess::applyRenderLead(*m_player, 0.0);
-  SequencePlayerTestAccess::prepareTracks(*m_player, []() {});
-  EXPECT_EQ(input->seeks.back().position, 3000000);
-}
-
-TEST_F(SequencePlayerRenderLeadTests,
-       ClockRelocationsAndNewSourcesRetainRenderLead) {
-  auto input = addTrack();
-  m_clock->relocate(1000000, IClock::ActionType::Seek);
-  SequencePlayerTestAccess::applyRenderLead(*m_player, 0.5);
   input->seeks.clear();
 
-  m_clock->relocate(2000000, IClock::ActionType::Seek);
-  ASSERT_FALSE(input->seeks.empty());
-  EXPECT_EQ(input->seeks.back().position, 2500000);
+  bool resolved = false;
+  SequencePlayerTestAccess::prepareTracks(*m_player,
+                                          [&resolved]() { resolved = true; });
 
-  m_clock->relocate(3000000, IClock::ActionType::LoopEndReached);
-  EXPECT_EQ(input->seeks.back().position, 3500000);
-
-  auto newSource = std::make_shared<FakeTrackInput>();
-  const RetVal<MixerChannelPtr> result = m_mixer->addChannel(20, newSource);
-  ASSERT_TRUE(result.ret);
-  ASSERT_FALSE(newSource->seeks.empty());
-  EXPECT_EQ(newSource->seeks.front().position, 3500000);
+  EXPECT_TRUE(resolved);
+  ASSERT_EQ(input->events.size(), 2u);
+  EXPECT_EQ(input->events[0], "prepare");
+  EXPECT_EQ(input->events[1], "seek");
+  ASSERT_EQ(input->seeks.size(), 1u);
+  EXPECT_EQ(input->seeks.back().position, 3000000);
+  EXPECT_TRUE(input->seeks.back().flushSound);
 }
 
-TEST_F(SequencePlayerRenderLeadTests,
-       BlockProcessingKeepsConstantLeadForTrackAndMasterFx) {
+TEST_F(SequencePlayerPreparationTests,
+       AsyncPreparationReanchorsToANewerLocateBeforeResolving) {
   auto input = addTrack();
-  m_clock->relocate(1000000, IClock::ActionType::Seek);
-  SequencePlayerTestAccess::applyRenderLead(*m_player, 0.25);
+  input->ready = false;
+  m_player->seek(3.0, true);
+  input->events.clear();
+  input->seeks.clear();
+
+  bool resolved = false;
+  SequencePlayerTestAccess::prepareTracks(*m_player,
+                                          [&resolved]() { resolved = true; });
+  EXPECT_FALSE(resolved);
+  ASSERT_EQ(input->events, std::vector<std::string>({"prepare"}));
+
+  m_player->seek(4.0, true);
+  ASSERT_FALSE(input->seeks.empty());
+  EXPECT_EQ(input->seeks.back().position, 4000000);
+
+  input->setReady(true);
+  EXPECT_TRUE(resolved);
+  ASSERT_GE(input->seeks.size(), 2u);
+  EXPECT_EQ(input->seeks.back().position, 4000000);
+  EXPECT_TRUE(input->seeks.back().flushSound);
+  EXPECT_DOUBLE_EQ(m_player->playbackPosition().to_double(), 4.0);
+}
+
+TEST_F(SequencePlayerPreparationTests,
+       SamePositionRestartStillSeeksPreparesAndReseeksSources) {
+  auto input = addTrack();
+  m_player->seek(5.0, true);
+  input->events.clear();
+  input->seeks.clear();
+
+  // SequencePlayer deliberately forwards a same-position seek even if the
+  // clock itself treats it as a no-op.
+  m_player->seek(5.0, true);
+  bool resolved = false;
+  SequencePlayerTestAccess::prepareTracks(*m_player,
+                                          [&resolved]() { resolved = true; });
+
+  EXPECT_TRUE(resolved);
+  ASSERT_EQ(input->events,
+            std::vector<std::string>({"seek", "prepare", "seek"}));
+  ASSERT_EQ(input->seeks.size(), 2u);
+  EXPECT_EQ(input->seeks[0].position, 5000000);
+  EXPECT_EQ(input->seeks[1].position, 5000000);
+  EXPECT_TRUE(input->seeks[0].flushSound);
+  EXPECT_TRUE(input->seeks[1].flushSound);
+}
+
+TEST_F(SequencePlayerPreparationTests,
+       NewAndUnmutedSourcesSeekToCurrentLogicalPosition) {
+  m_player->seek(2.0, true);
+
+  auto source = std::make_shared<FakeTrackInput>();
+  const RetVal<MixerChannelPtr> result = m_mixer->addChannel(20, source);
+  ASSERT_TRUE(result.ret);
+  ASSERT_EQ(source->seeks.size(), 1u);
+  EXPECT_EQ(source->seeks.back().position, 2000000);
+
+  MixerTestAccess::setMuted(*result.val, true);
+
+  m_player->seek(3.0, true);
+  MixerTestAccess::setMuted(*result.val, false);
+  ASSERT_GE(source->seeks.size(), 2u);
+  EXPECT_EQ(source->seeks.back().position, 3000000);
+}
+
+TEST_F(SequencePlayerPreparationTests,
+       PlayerSourcesAndFxUseOneLogicalTimeline) {
+  auto input = addTrack();
+  m_player->seek(1.0, true);
+  ASSERT_FALSE(input->seeks.empty());
+  EXPECT_EQ(input->seeks.back().position, 1000000);
 
   const RetVal<MixerChannelPtr> channelResult = m_mixer->addChannel(1, input);
   ASSERT_TRUE(channelResult.ret);
@@ -434,30 +459,7 @@ TEST_F(SequencePlayerRenderLeadTests,
 
   const samples_t logicalSamples = static_cast<samples_t>(
       m_clock->currentTime() * m_outputSpec.sampleRate / 1000000);
-  EXPECT_EQ(trackFx->positions.back() - logicalSamples, 12000u);
+  EXPECT_EQ(trackFx->positions.back(), logicalSamples);
   EXPECT_DOUBLE_EQ(m_player->playbackPosition().to_double(), 1.02);
-}
-
-TEST_F(SequencePlayerRenderLeadTests,
-       OverflowSaturatesAndNewPreparationCannotInheritLead) {
-  auto input = addTrack();
-  m_clock->relocate(100, IClock::ActionType::Seek);
-  const secs_t hugeLead = secs_t::make(std::numeric_limits<double>::max());
-  SequencePlayerTestAccess::applyRenderLead(*m_player, hugeLead);
-  ASSERT_FALSE(input->seeks.empty());
-  EXPECT_EQ(input->seeks.back().position, std::numeric_limits<msecs_t>::max());
-
-  input->processInput();
-  EXPECT_EQ(input->offStreamProcessCount, 1);
-
-  FakeGetTracks replacementTracks;
-  auto replacementInput = std::make_shared<FakeTrackInput>();
-  replacementTracks.add(2, replacementInput);
-  auto replacementPlayer =
-      std::make_unique<SequencePlayer>(&replacementTracks, m_clock, m_context);
-  SequencePlayerTestAccess::applyRenderLead(*replacementPlayer, 0.0);
-  ASSERT_FALSE(replacementInput->seeks.empty());
-  EXPECT_EQ(replacementInput->seeks.back().position, 100);
-  EXPECT_DOUBLE_EQ(replacementPlayer->playbackPosition().to_double(), 0.0001);
 }
 } // namespace

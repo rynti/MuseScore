@@ -37,6 +37,7 @@
 #include "mixerchannel.h"
 #include "igetplaybackposition.h"
 #include "audiosignalnotifier.h"
+#include "sampletimeconverter.h"
 
 namespace muse {
 class TaskScheduler;
@@ -63,7 +64,7 @@ public:
 
     void addClock(IClockPtr clock);
     void removeClock(IClockPtr clock);
-    void setRenderLead(msecs_t renderLead);
+    void resetClockTimeConversion();
 
     AudioOutputParams masterOutputParams() const;
     void setMasterOutputParams(const AudioOutputParams& params);
@@ -89,7 +90,6 @@ private:
 
     msecs_t playbackPosition() const override;
     samples_t playbackPositionSamples() const override;
-    msecs_t renderPosition(msecs_t logicalPosition) const;
 
     void processTrackChannels(size_t outBufferSize, size_t samplesPerChannel, TracksData& outTracksData);
     void mixOutputFromChannel(float* outBuffer, const float* inBuffer, unsigned int samplesCount) const;
@@ -127,7 +127,7 @@ private:
     std::vector<AuxChannelInfo> m_auxChannelInfoList;
 
     std::set<IClockPtr> m_clocks;
-    msecs_t m_renderLead = 0;
+    SamplesToMicrosecondsConverter m_clockTimeConverter;
 
     mutable AudioSignalsNotifier m_audioSignalNotifier;
 

@@ -137,14 +137,13 @@ void AudioDriverController::setTransportSyncState(AudioDriverTransportSyncState 
 }
 
 void AudioDriverController::sendTransportEvent(AudioDriverTransportEventType type, uint64_t token, secs_t position,
-                                               const std::string& message, secs_t renderLead)
+                                               const std::string& message)
 {
     AudioDriverTransportEvent event;
     event.type = type;
     event.driverGeneration = m_driverGeneration;
     event.token = token;
     event.position = position;
-    event.renderLead = renderLead;
     event.message = message;
     m_transportEvent.send(event);
 }
@@ -512,8 +511,7 @@ void AudioDriverController::pollJackTransport()
         m_pendingPauseRequest = false;
 
         sendTransportEvent(AudioDriverTransportEventType::Prepare, preparation.token,
-                           transportFrameToSeconds(preparation.frame), {},
-                           transportFrameToSeconds(preparation.renderLeadFrames));
+                           transportFrameToSeconds(preparation.frame));
     }
 
     JackAudioDriver::TransportObservation observation;
@@ -613,13 +611,14 @@ void AudioDriverController::pollJackStatus()
     const JackAudioDriver::RuntimeStatus status = driver->takeRuntimeStatus();
 
     if (status.xruns > 0) {
-        LOGW() << "JACK reported " << status.xruns << " xrun(s); audio continues on the next period";
+        LOGW() << "JACK reported " << status.xruns
+               << " xrun(s); synchronized audio resumes only if transport frame continuity is intact";
     }
 
     if (status.transportFrameDiscontinuity) {
         LOGW() << "JACK transport frame discontinuity: expected " << status.expectedTransportFrame
                << ", observed " << status.observedTransportFrame
-               << "; stop and restart transport if playback is audibly out of sync";
+               << "; synchronized output is silenced until transport is restarted or located";
     }
 
     std::string fault;

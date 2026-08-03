@@ -1,8 +1,11 @@
 # Focused Linux JACK Integration Plan
 
-> **Status:** Implemented in the working tree. Linux builds, focused automated
-> tests, PipeWire-JACK integration checks, and the core Ardour audio/transport
-> workflow pass. Native JACK2 and non-Linux CI remain external qualification.
+> **Status:** `jack-4.7d` frame-accurate synchronization is implemented locally
+> from `jack-4.7c` commit `486c63a35c`. The focused tests and JACK-on/JACK-off
+> Linux builds pass as recorded in section 5.3. Earlier PipeWire-JACK checks
+> remain useful regression evidence, but neither they nor the automated tests
+> qualify the corrected timing contract. Native JACK2 with Ardour remains the
+> mandatory release gate described in section 5.2.
 >
 > **Goal in one sentence:** make current MuseScore Studio genuinely useful as a
 > Linux JACK client, with stereo audio and bidirectional JACK transport control
@@ -151,22 +154,24 @@ Additional decisions:
 - While Effective and JACK is Stopped, keep processing ordinary engine audio so
   note audition remains usable; the main-thread Stopped handler owns pausing and
   seeking score playback. Starting and unprepared Rolling remain silent.
-- While synchronization is Effective, keep the shared JACK/player/UI position
-  at logical frame `F`, but prepare and render score timeline sources at
-  `F + L`. For each Starting episode or rolling locate, snapshot
-  `L = max(left.max, right.max)` from the two connected output ports'
-  `JackPlaybackLatency` ranges. Zero or unconnected ranges produce zero lead.
-  A graph change while Rolling updates the cached range only; it cannot move the
-  current source cursor and applies to the next Starting episode or rolling
-  locate.
-- Preserve slow-sync ordering and silence: pause, logical seek to `F`,
-  `prepareToPlay(L)`, source re-seek/flush to `F + L`, wait for source
-  readiness, enter Running, then acknowledge JACK ready. Starting remains
-  silent; only the first eligible Rolling callback renders.
-- UI position, notation cursor, public seeks, loop/end decisions, and
-  MuseScore-originated JACK commands continue to use logical `F`. Only timeline
-  source seeks and render-time track/master FX position metadata use `F + L`;
-  off-stream note audition remains immediate.
+- Use one source-time contract everywhere: audio written during JACK cycle
+  `[F, F+nframes)` represents score time `[F, F+nframes)`. Player, source, UI,
+  track/master FX metadata, and JACK positions are all anchored to the same
+  logical frame `F`. Downstream graph playback latency must never become a
+  future source seek or a hidden render lead.
+- Preserve slow-sync ordering and silence. On `Starting(F)`, pause the local
+  player, seek the logical player and every current source to `F`, call the
+  zero-argument `prepareToPlay()`, and wait for asynchronous source readiness.
+  Immediately before resolving readiness, re-seek/flush every current source
+  to the clock's latest logical position. Then activate playback, wait for a
+  new Running notification caused by that command, and only then acknowledge
+  JACK ready. Starting remains silent; only the first eligible Rolling callback
+  renders.
+- The post-readiness re-anchor applies even to a same-position restart and is
+  allowed to observe a newer locate. A stale generation/token remains unable
+  to release JACK, while an older asynchronous completion re-anchors sources to
+  the latest logical clock rather than restoring its obsolete frame. Adding or
+  unmuting a source likewise seeks it to the current logical position.
 - Playback-speed/tempo-multiplier changes are unsupported while Effective and
   are rejected with a short explanation. Retiming JACK or exchanging BBT is not
   v1. Incidental internal tempo refresh remains local and must not emit a JACK
@@ -185,32 +190,68 @@ Additional decisions:
   MuseScore never joins mid-episode. Disabling cancels Pending and must not stop
   Ardour.
 
-### 2.3 Practical timing target
+### 2.3 Frame-accuracy evidence and target
 
-Use a dry score with a sharp click/transient for timing qualification. At every
-explicit start or locate, the first score transient should correspond to the
-requested JACK frame within two JACK periods under normal load. Separately, in
-a ten-minute 48 kHz run, measure the MuseScore-to-Ardour offset near the start
-and again near the end; the change in that offset must remain within two
-periods. A fixed synth attack or effect latency is not clock drift.
+The following 48 kHz measurements motivated `jack-4.7d` and are durable
+negative controls. They are strongly proportional to the JACK period:
 
-Native latency qualification must cover direct MuseScore-to-system playback and
-MuseScore-to-Ardour-track-to-Master routing at 256, 1024, and 2048 frames.
-Compare captured transients and recorded-region placement, and include the
-ten-minute drift measurement. These cases remain unverified until run on native
-JACK2 with Ardour.
+| Period | Direct MuseScore-to-track residual | MuseScore-to-input-bus-to-track residual |
+| --- | --- | --- |
+| 2,048 frames (42.67 ms) | approximately 43 ms | approximately 86 ms |
+| 4,096 frames (85.33 ms) | approximately 88 ms | approximately 176 ms |
 
-The 2048-frame result falsifies this compensation if it does not improve by
-approximately the output ports' reported 6,144--6,160 frames. In that case,
-remove or revert the compensation; do not stack a fixed delay, guessed periods,
-or another offset on top.
+Historical behavior must remain distinguishable:
 
-This is not a promise of sample-exact reconstruction through every VST or an
-overloaded machine. Do not add a continuous seek/chase loop. The current code
-truncates fractional microseconds in `Mixer::process()` and FluidSynth's
-sample-to-time advance; if the long-run acceptance test demonstrates drift,
-fix those specific accumulators by carrying the division remainder and add a
-small unit test. Do not turn that correction into a general clock rewrite.
+| Version | Relevant design | Required lesson |
+| --- | --- | --- |
+| `jack-4.7b` / `3bfd371511` | Output-only ports, no render lead, one preparation before the engine free-runs | Merely deleting 4.7c's lead without repairing source preparation is an unacceptable regression. |
+| `c9aa11920d` | Terminal-source metadata and frame-discontinuity diagnostics, still no lead | Useful diagnostic baseline; its native timing was never qualified. |
+| `jack-4.7c` / `486c63a35c` | Downstream `JackPlaybackLatency` becomes a future source seek | Route-dependent compensation corrupts the first note and leaves period-scaled residuals. |
+| `jack-4.7d` | Source anchored to JACK frame `F`, exact block progression, route latency owned by JACK/Ardour | Must eliminate both prior failures. |
+
+Use one deterministic fixture throughout native qualification: 48 kHz, 100%
+playback speed, fixed 120 BPM, dry FluidSynth/SoundFont output with reverb and
+effects disabled, repeated sharp clicks, and repeated identical sustained
+notes. Export the same score to WAV and place it exactly on Ardour's grid. Keep
+a transport-aware recorder connected directly to MuseScore's JACK outputs and
+already rolling before the transport start, and separately record Ardour's
+direct-track and input-bus-to-track routes. Record the JACK period,
+periods-per-buffer, capture/playback latency ranges, first Rolling frame, first
+captured transient frame, Ardour alignment choice, and offset from the WAV.
+
+This separates the boundary under test. If the direct JACK-port capture is
+late, MuseScore's preparation/render cursor is wrong. If direct output is
+correct but Ardour placement is late, inspect JACK/Ardour latency metadata and
+alignment without moving score time. If both contribute, fix the MuseScore
+boundary first. Do not add source lead, a guessed period count, or an
+Ardour-specific cursor offset.
+
+At each valid start or locate, direct-port emission and Ardour-compensated
+placement must be within 1 ms of the reference WAV. Native JACK2 qualification
+must cover direct and bus routes at periods 256, 1,024, 2,048, and a confirmed
+4,096 frames. There must be no residual proportional to one or more periods.
+The first sustained note must match a later identical note in pitch, attack,
+and duration; an already-running recorder or pre-roll is required when judging
+its attack. An immediate Ardour recording may miss the first attack, matching
+the accepted Hydrogen/MuseScore 3 startup behavior, but all subsequent material
+must be aligned.
+
+In a ten-minute 48 kHz run, the early-to-final offset change must remain within
+1 ms. Carry the division remainder when consecutive audio blocks advance the
+Mixer clock and dry event sequencer through existing microsecond APIs; reset it
+on absolute seek, source replacement, output-spec/sample-rate change, and
+sequence reset. Cumulative numeric conversion error must remain below one
+microsecond. This is not a new sample-domain renderer or a promise of
+sample-exact behavior through every plugin.
+
+Keep output ports marked `JackPortIsOutput | JackPortIsTerminal`. MuseScore
+advertises no invented source-side latency: a driver rendering the requested
+block in the current callback has zero driver-internal capture latency. Never
+query downstream `JackPlaybackLatency` to move score content. Test Ardour
+`Automatic` alignment first, then explicit **Align with Capture Time**. If
+direct output is frame-correct and only explicit capture-time alignment passes,
+record Automatic as an accepted Ardour limitation rather than changing correct
+terminal metadata or shifting the score cursor.
 
 ### 2.4 Explicit non-goals
 
@@ -339,13 +380,11 @@ acceptance test demonstrates why. Document that reason in the change.
    common runtime period changes do not allocate in a callback.
 5. Register both output ports as terminal synthesized sources with
    `JackPortIsOutput | JackPortIsTerminal`, then register the process, shutdown,
-   xrun, buffer-size, sample-rate, playback-latency, and sync callbacks. Check
-   every port/callback registration API that returns status and unwind on
-   failure; `jack_on_shutdown()` itself returns `void`. Because JACK declares
-   the latency API weak, guard both callback registration and range queries.
-   An older runtime keeps ordinary JACK playback with zero render lead and one
-   main-thread warning; it never calls a missing weak symbol or invents an
-   offset.
+   xrun, buffer-size, sample-rate, and sync callbacks. Check every
+   port/callback registration API that returns status and unwind on failure;
+   `jack_on_shutdown()` itself returns `void`. Do not install a playback-latency
+   callback or cache downstream playback ranges: graph latency is not a source
+   render offset.
 6. Before activation, install the controller-assigned driver generation and
    requested-sync state and initialize all callback-visible flags/slots. This
    prevents an activation callback from observing a half-configured bridge.
@@ -385,13 +424,12 @@ The process callback uses the current `nframes`, not the preferred buffer size:
    `jack_port_get_buffer()` and `jack_transport_query()` are the intentional
    libjack calls; start/stop/locate remain main-thread calls.
 
-The latency callback handles only `JackPlaybackLatency`: query both output
-ports, atomically publish each min/max range, and publish last with release
-ordering the derived `max(left.max, right.max)`. `JackCaptureLatency` is a
-no-op because MuseScore has no input-through-output path and must not advertise
-invented internal latency. The callback is bounded to JACK queries and
-explicitly lock-free scalar atomic stores; it performs no allocation, locking,
-Qt/UI work, logging, or resource destruction.
+MuseScore publishes no invented source latency. The output ports' terminal
+metadata lets JACK and Ardour calculate their own graph boundary; no latency
+range is consulted to advance the score. Any future production port-flag
+change requires native evidence that it fixes Ardour Automatic alignment
+without breaking direct or bus timing and a corresponding product decision in
+this plan.
 
 Calling the existing render callback from JACK's process callback is an
 intentional v1 design choice and matches MuseScore's driver pull architecture.
@@ -409,8 +447,10 @@ Period changes up to the preallocated capacity update the effective period and
 are published to the controller on its next poll. If a period grows beyond
 capacity, output silence and report that restarting MuseScore is required.
 Sample-rate changes stop/silence JACK output and request restart rather than
-attempting a live engine-wide retime. Xruns increment a counter and recover on
-the next period; do not build a fault-state framework around them.
+attempting a live engine-wide retime. Xruns increment a counter; if an xrun
+causes a rendered-frame discontinuity, the continuity gate keeps later Rolling
+cycles silent until a fresh stop/start or locate is prepared. Restarting
+transport is an accepted recovery action.
 
 ### 3.4 Transport bridge and thread boundary
 
@@ -438,19 +478,17 @@ Use a tiny tokenized state exchange:
   attempt and defer to the next main poll if the version changes; no callback
   spins or retries. A newer Starting episode cancels and supersedes an older
   preparation. No general-purpose queue is needed.
-- The cached left/right playback-latency ranges and derived maximum follow the
-  same lock-free scalar requirement. Clear them with client state, and clear
-  the current episode's snapshotted lead whenever transport invalidation clears
-  that episode.
 - While synchronization is requested (including Pending) or Effective, the
   process callback calls
   `jack_transport_query()` once per cycle and compares the state/frame with its
   last observation. Publish only a state transition or a changed frame while
   stopped. Each eligible Rolling render compares the current frame with the
-  expected next frame. A discontinuity publishes the expected and observed
-  frames for a main-thread warning, rebases to the observed block, and never
-  generates a locate, seek, catch-up render, or automatic chase. Ordinary
-  contiguous Rolling advance is not an event.
+  expected next frame. A mismatch publishes the exact expected and observed
+  frames, revokes render eligibility without clearing that diagnostic, and
+  outputs silence for the current and later Rolling cycles until a fresh
+  stop/start or locate completes preparation. It never rebases and continues,
+  generates a locate, seeks sources from the callback, renders catch-up blocks,
+  or commands JACK. Ordinary contiguous Rolling advance is not an event.
 - Give every enable request and newly installed JACK driver a new request
   epoch, and reset the callback-domain comparison baseline for that epoch. The
   first query/sync observation in it is therefore fresh even when JACK's state
@@ -496,19 +534,21 @@ local timeline or stops the shared transport merely because the locate failed.
 
 For a JACK/Ardour start or rolling locate:
 
-1. On entry into `JackTransportStarting`, the sync callback snapshots the
-   current derived playback-latency maximum and publishes
-   `Prepare(generation, token, frame, renderLeadFrames)`, then returns `0`.
-   Repeated calls in the same Starting episode return the current readiness
-   without republishing or changing that episode's lead.
+1. On entry into `JackTransportStarting`, the sync callback publishes
+   `Prepare(generation, token, frame)`, then returns `0`. Repeated calls in the
+   same Starting episode return the current readiness without republishing.
 2. `PlaybackController` pauses if needed, logically seeks the current player to
-   `F`, calls `prepareToPlay(L)`, and rechecks the active driver generation,
-   token, score,
-   and player before and after every asynchronous continuation. The seek is
-   always enqueued before preparation: remove
+   `F`, calls `prepareToPlay()`, and rechecks the active driver generation,
+   token, score, and player before and after every asynchronous continuation.
+   The seek is always enqueued before preparation: remove
    `Player::seek()`'s early comparison with its asynchronously reported
    `m_playbackPosition` and let the engine's seek path handle a same-position
    no-op. This also preserves rapid A -> B -> A seek ordering.
+   After source readiness resolves, and before the preparation promise resolves,
+   re-seek/flush every current source to the clock's latest logical position.
+   This final anchor is required for immediate and asynchronous readiness,
+   same-position restarts, and a newer locate arriving while an older
+   preparation is pending.
    If this is the Pending activation race, successful preparation completes
    local convergence; publish Effective on the main thread now, before issuing
    start/resume. Until that publication, user commands continue to use their
@@ -522,9 +562,8 @@ For a JACK/Ardour start or rolling locate:
 4. The sync callback, not the main-thread completion, marks the current token as
    released when it actually returns `1` for that token while still Starting.
    Only a released **successful** token gains render eligibility. When JACK
-   becomes Rolling, the first rendered period starts from source position
-   `F + L`, while JACK observation and rendered-frame continuity remain based
-   on logical `F`.
+   becomes Rolling, the first rendered period starts from source position `F`;
+   JACK observation and rendered-frame continuity use that same frame.
 5. On failure/cancellation, acknowledge failure so the sync callback returns
    ready without playing MuseScore; report the error on the main thread.
 
@@ -789,11 +828,13 @@ full production Preferences page catalog merely for this feature.
   a late main-thread success after Rolling cannot enable it. Stopped continues
   engine rendering for audition; stop/relocate/replacement clears Rolling
   eligibility; a fresh rolling relocate can recover after timeout.
-- Rendered-frame continuity: first Rolling at the prepared frame and contiguous
-  periods remain clean; a skipped frame range reports the exact expected and
-  observed pair and rebases. Stop, locate, invalidation, sync disable, driver
-  replacement, and server loss clear the continuity baseline and pending
-  diagnostic.
+- Rendered-frame continuity: Starting is silent; the first Rolling callback
+  must equal the prepared frame and each later callback must equal the previous
+  frame plus its actual `nframes`. A first-block or later mismatch reports and
+  preserves the exact expected/observed pair, revokes render eligibility, and
+  keeps current and later Rolling callbacks silent. A fresh prepared
+  stop/start or locate restores eligibility; invalidation, sync disable, driver
+  replacement, and server loss clear the old episode.
 - User/external routing: a user Play becomes one JACK play request; an external
   Play applies locally without an outbound echo; sync-off uses the original
   local methods; a handled JACK-call failure does not start locally; a rejected
@@ -805,9 +846,12 @@ full production Preferences page catalog merely for this feature.
   position, rapid A -> B -> A seeks enqueue and apply the final A, and the
   sequence "local locate A, then authoritative external locate B before A is
   observed" converges to B rather than waiting forever for A.
-- Async preparation: closing/changing the score or replacing the player/driver
-  at each continuation makes completion stale, and only a new Running
-  notification after this token's start/resume can acknowledge it.
+- Async preparation: immediate and asynchronous readiness both perform a final
+  source re-anchor to the latest logical clock. Same-position restarts flush
+  sources; a newer locate cannot be overwritten by an older completion;
+  closing/changing the score or replacing the player/driver at each
+  continuation makes completion stale; and only a new Running notification
+  after this token's start/resume can acknowledge it.
 - Driver selection: a requested backend is created exactly, failed JACK open
   preserves the actual fallback identity, and forced ALSA reports ALSA. Inside
   a Preferences transaction, Apply preserves the successful live choice,
@@ -824,19 +868,18 @@ full production Preferences page catalog merely for this feature.
   replacement and server loss publish ineffective and restore restrictions
   without changing the requested preference; server loss presents Unavailable.
 - Seconds/frame conversion, including zero, a nonzero cursor, and clamping.
-- If fractional time accumulation is changed, a block-size/rate test proves
-  the remainder does not accumulate drift.
-- Playback-latency preparation: zero/unconnected ranges produce zero lead; the
-  larger output maximum is snapshotted per episode; graph changes do not mutate
-  an active episode; preparations keep generation/token/frame/lead coherent;
-  invalidation clears the snapshot; maximum `jack_nframes_t` does not wrap.
-- Render-lead separation: source seeks and track/master FX metadata use
-  saturating logical-plus-lead positions, while player/UI/JACK positions,
-  transport requests, loop/end decisions, and note audition stay logical.
-  Default preparation and sequence replacement restore zero lead.
-- Existing audio tests plus compile smoke with JACK disabled; existing
-  non-Linux CI (or an equivalent compile smoke) remains green after the shared
-  interface/stub changes.
+- Remainder-carrying advancement: ten simulated minutes at 48 kHz and periods
+  256, 1,024, 2,048, and 4,096 retain less than one microsecond of cumulative
+  conversion error for Mixer and dry event-sequencer progression. Absolute
+  seek, source replacement, output-spec/sample-rate change, and sequence reset
+  clear the remainder.
+- Source-time separation has been removed: preparation publishes logical `F`
+  only; player, source, UI, FX, and JACK positions contain no hidden lead; and
+  newly added or unmuted tracks seek to the current logical position.
+- Existing callback lifetime, stale-token, timeout, server-loss, and
+  no-command-echo tests remain green. Existing audio tests plus compile smoke
+  with JACK disabled; existing non-Linux CI (or an equivalent compile smoke)
+  remains green after the shared interface/stub changes.
 
 A tiny injectable libjack function table may be used for open/cleanup tests if
 it remains smaller than the behavior being tested. It is not a requirement;
@@ -844,10 +887,13 @@ the required manual dummy/real-server pass covers the real ABI.
 
 ### 5.2 Required manual/integration matrix
 
-Use JACK2 with a dummy or real device at 48 kHz. Run the full matrix at either
-256 or 1024 frames, repeat core stereo/start/stop/locate checks at the other
-period, and run the explicit period-change case. Use a short score with clear
-attacks and Ardour as the visible transport peer.
+Native JACK2 with Ardour at 48 kHz is the sole release gate. Run the deterministic
+fixture from section 2.3 at periods 256, 1,024, 2,048, and a confirmed 4,096
+frames through both MuseScore-to-recording-track and
+MuseScore-to-input-bus-to-recording-track routes. Test Ardour Automatic
+alignment first and explicit **Align with Capture Time** second. Runs with an
+xrun, overload, or unexpected frame-discontinuity warning are invalid timing
+measurements and must be repeated. PipeWire-JACK remains an optional smoke test.
 
 | Case | Expected result |
 | --- | --- |
@@ -876,27 +922,54 @@ attacks and Ardour as the visible transport peer.
 | Switch ALSA/PipeWire -> JACK -> previous API where servers coexist | Audio returns; no crash; a dropout/stop is acceptable |
 | Native JACK exclusively owns ALSA, then select ALSA | Clear reopen failure and successful JACK restoration are acceptable |
 | Change JACK period 256 <-> 1024 | Continues or safely reconfigures without overflow/crash |
-| Induce an xrun during Rolling | Recovers on following periods without a synthetic locate, stuck state, or crash |
+| Induce an xrun during Rolling | No synthetic locate or crash; if frame continuity is lost, later Rolling cycles stay silent and a fresh stop/start or locate restores synchronized rendering |
 | Kill JACK server during playback | Unavailable is reported; MuseScore becomes locally Stopped, restores Effective-only restrictions, and remains safe; backend reselection is possible |
-| Ten-minute dry rhythmic score against Ardour reference | Change from early to final measured offset stays within two periods |
-| Native timing, MuseScore -> system playback, periods 256/1024/2048 | Captured transients for starts and locates remain within two periods after graph-derived compensation |
-| Native timing, MuseScore -> Ardour track -> Master, periods 256/1024/2048 | Captured transients are not early or double-compensated and remain within two periods |
-| Record MuseScore into Ardour at periods 256/1024/2048 | Recorded-region placement loses no additional musical material; any region-start offset is recorded separately |
-| Ten-minute native direct and Ardour-routed runs | Initial absolute offset and early-to-final drift are recorded separately; drift stays within two periods |
+| Start at zero, a nonzero barline, mid-measure on a note; stopped locate; rolling locate; commands from Ardour and MuseScore; twenty repeated cycles | Each preparation anchors the first rendered block to the requested frame without a stale first note or duplicate command |
+| Native timing, direct JACK-port capture, periods 256/1,024/2,048/4,096 | First emitted transient versus the grid-aligned reference WAV is within 1 ms with no period-scaled residual |
+| Ardour Automatic, direct and bus routes, periods 256/1,024/2,048/4,096 | Compensated recorded placement versus the reference WAV is within 1 ms on both routes; record separately whether Automatic passes |
+| Explicit Align with Capture Time, direct and bus routes, periods 256/1,024/2,048/4,096 | Supported fallback is within 1 ms on both routes when Automatic is not; do not shift MuseScore source time to compensate |
+| First sustained note with pre-roll/already-running recorder | Pitch, attack, and duration match a later identical note; an immediate Ardour recording may omit only the initial attack |
+| Ten-minute native direct and Ardour-routed runs | Initial absolute offset and early-to-final offset are recorded separately; the change is within 1 ms |
 | PipeWire-JACK smoke, if installed | Open, stereo audio, start/stop/locate in both directions |
 
-For timing cases, record JACK rate/period and compare captured dry transients,
-not only the UI cursor. Record the initial absolute start/locate error and the
-early-to-final offset change separately. Ordinary machine overload/xruns may
-invalidate a run; fix repeatable product defects, not a one-off overloaded test
-host.
+For every timing case, record the JACK and Ardour versions, rate, period,
+periods-per-buffer, reported capture/playback ranges, routing graph, alignment
+choice, first Rolling frame, first transient frame, offset against the WAV, and
+the early/final offsets where applicable. Compare captured dry transients, not
+only the UI cursor.
 
-The frame-discontinuity warning identifies missed rendered JACK cycles that can
-produce period-sized lag. It is diagnostic only: restart transport to restore
-the prepared baseline rather than automatically chasing from the real-time
-callback.
+The frame-discontinuity warning identifies a run that would otherwise produce
+period-sized lag. The render gate deliberately chooses silence: restart or
+relocate transport to restore a prepared baseline rather than chasing from the
+real-time callback.
 
-### 5.3 Completion checklist
+Release requires both historical negative controls to be absent: no
+`jack-4.7b`-style delay against WAV playback, and no `jack-4.7c`-style first-note
+corruption or route-dependent period residual.
+
+### 5.3 Verified local `jack-4.7d` evidence
+
+On 2026-08-03, from local branch `jack-4.7d` based on
+`486c63a35c83cc2b5cc36d9b1904827aeab02c48`:
+
+- `cmake --build build.debug --target muse_audio_jack_tests muse_audio_tests
+  MuseScoreStudio -j6` passed with `MUSE_MODULE_AUDIO_JACK=ON`.
+- `build.debug/src/framework/audio/tests/muse_audio_jack_tests` passed all 17
+  callback/transport tests.
+- `build.debug/src/framework/audio/tests/muse_audio_tests` passed all 36 shared
+  audio tests, including preparation re-anchoring and ten-minute fractional
+  clock progression at 256, 1,024, 2,048, and 4,096 frames.
+- A fresh `build.nojack` configured with `MUSE_MODULE_AUDIO_JACK=OFF` built the
+  full `MuseScoreStudio` target and `muse_audio_tests`; all 36 tests passed.
+  `ldd`, `readelf -d`, and the generated Ninja commands contained no libjack
+  dependency or JACK driver source for that executable.
+- This host provides the PipeWire JACK ABI (`pkg-config jack` 3.1608.0) and
+  `pw-jack`, but no `jackd`, Ardour, or JACK capture utility. Consequently no
+  native timing offset, route, Automatic-alignment, first-note, or ten-minute
+  drift measurement was made. Section 5.2 remains unchecked and is the release
+  gate.
+
+### 5.4 Completion checklist
 
 Checked items below have direct build, automated-test, code-audit, or recorded
 PipeWire-JACK/Ardour evidence. Unchecked items remain external manual/CI
@@ -944,9 +1017,9 @@ qualification; they do not imply unfinished implementation code.
       ordinary local behavior after disable, driver replacement, or server loss.
 - [ ] Missing server, normal backend switching, period change, xrun, and server
       loss meet the practical safety behavior.
-- [x] Focused callback/state automated checks pass; user/external routing passed
-      focused code audit plus the manual PipeWire-JACK/Ardour workflow, and
-      API/Preferences reconciliation passed focused code audit.
+- [x] The 4.7d focused callback/state and shared-audio automated checks pass;
+      the user/external routing and API/Preferences boundaries passed focused
+      code audit. Earlier PipeWire-JACK workflow evidence is regression-only.
 - [ ] The extended native JACK2 manual matrix passes.
 - [x] Accepted limitations are recorded.
 - [x] PipeWire-JACK smoke is recorded when available (optional).
@@ -965,6 +1038,16 @@ JACK audio/transport workflow works.
 
 ## 7. References
 
+- Hydrogen 1.2.6, commit `be87f2decf36f0c86586801cc05c0482a8af9dd1`,
+  [`JackAudioDriver.cpp`](/home/rynti/dev/hydrogen/src/core/IO/JackAudioDriver.cpp)
+  — local read-only behavioral reference for querying the first frame of the
+  current JACK cycle before rendering, with no downstream-latency source lead.
+- MuseScore 3.7, commit `e37e22e43119153192a573fe2d558b703311bb74`,
+  [`jackaudio.cpp`](/home/rynti/dev/MuseScore-3.7/audiodrivers/jackaudio.cpp)
+  — local read-only behavioral reference for comparing the sequencer cursor
+  with the current JACK frame during processing.
+- Current MuseScore 4 implementation,
+  [`jackaudiodriver.cpp`](/home/rynti/dev/MuseScore/src/framework/audio/driver/platform/jack/jackaudiodriver.cpp).
 - [Lyrra MuseScore 4 JACK/MIDI pull request #19246](https://github.com/musescore/MuseScore/pull/19246) — historical behavior and research; closed and not directly mergeable.
 - [Lyrra transport implementation commit](https://github.com/musescore/MuseScore/commit/c27a329a669913c45695f7bd2d084c011cf5d655) and [preference commit](https://github.com/musescore/MuseScore/commit/892497418b709b50196ffe22ebdf1371dad88720) — behavior references, not code to copy.
 - [MuseScore 3 JACK driver](https://github.com/musescore/MuseScore/blob/v3.6.2/audio/drivers/jackaudio.cpp) — parity reference for the basic audio/transport workflow only.
