@@ -29,6 +29,7 @@
 
 #include "modularity/ioc.h"
 #include "async/asyncable.h"
+#include "actions/iactionsdispatcher.h"
 
 #include "audio/main/iaudioconfiguration.h"
 #include "audio/iaudiodrivercontroller.h"
@@ -50,6 +51,8 @@ class AudioMidiPreferencesModel : public QObject, public muse::Contextable, publ
 
     Q_PROPERTY(int currentAudioApiIndex READ currentAudioApiIndex WRITE setCurrentAudioApiIndex NOTIFY currentAudioApiIndexChanged)
     Q_PROPERTY(bool audioApiSelectionEnabled READ audioApiSelectionEnabled NOTIFY audioApiSelectionEnabledChanged)
+    Q_PROPERTY(bool jackWorkerRpcWarningVisible READ jackWorkerRpcWarningVisible NOTIFY jackWorkerRpcWarningVisibleChanged)
+    Q_PROPERTY(QString jackWorkModeName READ jackWorkModeName NOTIFY jackWorkerRpcWarningVisibleChanged)
 
     Q_PROPERTY(QVariantList midiInputDevices READ midiInputDevices NOTIFY midiInputDevicesChanged)
     Q_PROPERTY(QString midiInputDeviceId READ midiInputDeviceId NOTIFY midiInputDeviceIdChanged)
@@ -78,6 +81,7 @@ class AudioMidiPreferencesModel : public QObject, public muse::Contextable, publ
     muse::ContextInject<muse::midi::IMidiOutPort> midiOutPort = { this };
     muse::ContextInject<muse::midi::IMidiInPort> midiInPort = { this };
     muse::ContextInject<muse::IInteractive> interactive = { this };
+    muse::ContextInject<muse::actions::IActionsDispatcher> dispatcher = { this };
 #if defined(MUSE_MODULE_AUDIO_JACK) && defined(Q_OS_LINUX)
     muse::ContextInject<mu::context::IGlobalContext> globalContext = { this };
 #endif
@@ -89,6 +93,11 @@ public:
 
     int currentAudioApiIndex() const;
     bool audioApiSelectionEnabled() const;
+    bool jackWorkerRpcWarningVisible() const;
+    QString jackWorkModeName() const;
+
+    Q_INVOKABLE void useWorkerRpcAndRestart();
+    Q_INVOKABLE void restartApplication();
 
     QString midiInputDeviceId() const;
     Q_INVOKABLE void inputDeviceSelected(const QString& deviceId);
@@ -130,6 +139,8 @@ public slots:
 signals:
     void currentAudioApiIndexChanged(int index);
     void audioApiSelectionEnabledChanged();
+    void jackWorkerRpcWarningVisibleChanged();
+    void applyAndRestartRequested();
     void midiInputDeviceIdChanged();
     void midiOutputDeviceIdChanged();
 
@@ -146,8 +157,12 @@ signals:
     void useSoundFontLowPassFilterChanged();
 
 private:
+    bool switchAudioApi(const std::string& requestedApi);
     void reconcilePreferredAudioApi();
     void showAudioApiSwitchError(const std::string& requestedApi) const;
+#if defined(MUSE_MODULE_AUDIO_JACK) && defined(Q_OS_LINUX)
+    void showJackWorkModeWarning(const std::string& requestedApi);
+#endif
 
     muse::midi::MidiDeviceID midiInputDeviceId(int index) const;
     muse::midi::MidiDeviceID midiOutputDeviceId(int index) const;

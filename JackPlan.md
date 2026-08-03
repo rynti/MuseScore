@@ -1,8 +1,8 @@
 # Focused Linux JACK Integration Plan
 
-> **Status:** `jack-4.7d` frame-accurate synchronization is implemented locally
-> from `jack-4.7c` commit `486c63a35c`. The focused tests and JACK-on/JACK-off
-> Linux builds pass as recorded in section 5.3. Earlier PipeWire-JACK checks
+> **Status:** `jack-4.7e` adds focused Worker-RPC guidance to the frame-accurate
+> `jack-4.7d` implementation. The focused tests and JACK-on/JACK-off
+> Linux builds pass as recorded in sections 5.3 and 5.4. Earlier PipeWire-JACK checks
 > remain useful regression evidence, but neither they nor the automated tests
 > qualify the corrected timing contract. Native JACK2 with Ardour remains the
 > mandatory release gate described in section 5.2.
@@ -98,6 +98,14 @@ desktop build:
     `Stopped` without commanding JACK, and reports the loss. Selecting a backend
     again or restarting MuseScore is
     allowed. Automatic reconnect is not required.
+11. **Recommended work mode:** JACK remains usable in the developer Worker and
+    Driver modes, but selecting JACK in either mode warns that Worker RPC is
+    recommended and offers to apply Preferences and restart into it. Users may
+    explicitly continue with JACK anyway. While JACK is active in a non-RPC
+    mode, Audio Preferences keeps a visible warning and restart button. Do not
+    block or rewrite the Diagnostics work-mode controls, and do not show a
+    modal warning merely because the app starts in an intentionally selected
+    developer mode.
 
 ### 2.2 Transport semantics
 
@@ -209,6 +217,14 @@ Historical behavior must remain distinguishable:
 | `jack-4.7c` / `486c63a35c` | Downstream `JackPlaybackLatency` becomes a future source seek | Route-dependent compensation corrupts the first note and leaves period-scaled residuals. |
 | `jack-4.7d` | Source anchored to JACK frame `F`, exact block progression, route latency owned by JACK/Ardour | Must eliminate both prior failures. |
 
+Native JACK2/Ardour testing at 48 kHz with a 2,048-frame period and Ardour
+alignment set to **Automatic** isolated the remaining recording offset to the
+application work mode: developer `WorkerMode` recorded approximately one
+period (43 ms) late, while `WorkerRpcMode` recorded aligned with the reference
+WAV. Playback retained an approximately one-period audible graph delay, also
+seen with MuseScore 3 and Hydrogen, and is not a source-time correction target.
+All recording-alignment qualification therefore uses `WorkerRpcMode`.
+
 Use one deterministic fixture throughout native qualification: 48 kHz, 100%
 playback speed, fixed 120 BPM, dry FluidSynth/SoundFont output with reverb and
 effects disabled, repeated sharp clicks, and repeated identical sustained
@@ -248,10 +264,9 @@ Keep output ports marked `JackPortIsOutput | JackPortIsTerminal`. MuseScore
 advertises no invented source-side latency: a driver rendering the requested
 block in the current callback has zero driver-internal capture latency. Never
 query downstream `JackPlaybackLatency` to move score content. Test Ardour
-`Automatic` alignment first, then explicit **Align with Capture Time**. If
-direct output is frame-correct and only explicit capture-time alignment passes,
-record Automatic as an accepted Ardour limitation rather than changing correct
-terminal metadata or shifting the score cursor.
+`Automatic` alignment. Explicit **Align with Capture Time** is outside the
+recording-placement contract and must not motivate a MuseScore source-time
+offset.
 
 ### 2.4 Explicit non-goals
 
@@ -641,6 +656,17 @@ programmatic rate or period edit while JACK is active; a one-item combo box is
 not the enforcement boundary. Publish the server values to the active engine
 spec/UI only; do not overwrite the saved generic ALSA/PipeWire rate or period.
 
+The normal application mode for JACK is `WorkerRpcMode`. If the effective mode
+is Worker or Driver when JACK is selected, Audio Preferences asks whether to
+switch to Worker RPC and restart, use JACK anyway, or cancel. The recommended
+choice first validates the existing reversible JACK backend switch, then stages
+Worker RPC, applies the open Preferences transaction, and dispatches the normal
+safe restart action. A failed JACK open restores the prior backend and does not
+change work mode. With active JACK in Worker or Driver mode, keep an inline
+warning and the same apply-and-restart action visible. This is guidance only:
+Diagnostics may still select any work mode, and there is no startup modal or
+audio-controller enforcement.
+
 Treat the persisted checkbox as requested state and expose Off/Pending/Effective
 state (or equivalent requested/effective accessors), an Unavailable fault
 presentation for a dead active JACK client, and one change notification from the
@@ -890,8 +916,8 @@ the required manual dummy/real-server pass covers the real ABI.
 Native JACK2 with Ardour at 48 kHz is the sole release gate. Run the deterministic
 fixture from section 2.3 at periods 256, 1,024, 2,048, and a confirmed 4,096
 frames through both MuseScore-to-recording-track and
-MuseScore-to-input-bus-to-recording-track routes. Test Ardour Automatic
-alignment first and explicit **Align with Capture Time** second. Runs with an
+MuseScore-to-input-bus-to-recording-track routes. Test Ardour **Automatic**
+alignment. Runs with an
 xrun, overload, or unexpected frame-discontinuity warning are invalid timing
 measurements and must be repeated. PipeWire-JACK remains an optional smoke test.
 
@@ -902,6 +928,8 @@ measurements and must be repeated. PipeWire-JACK remains an optional smoke test.
 | First run/default setting, then restart after enabling | Transport defaults off; the requested setting persists |
 | Server absent at startup with JACK saved | Clear fallback; opened backend is published/saved; no crash |
 | Server absent, then JACK is selected at runtime | Clear switch failure; previous backend/index is restored |
+| Select JACK in Worker or Driver mode | A three-choice warning recommends Worker RPC; Cancel keeps the old backend, Use JACK anyway activates JACK without changing mode, and the recommended choice activates JACK before applying Preferences and safely restarting |
+| Start or continue with active JACK in Worker or Driver mode | Audio Preferences shows the persistent warning and one-click apply-and-restart action; there is no startup modal and Diagnostics can still select every work mode |
 | Select another API, then Apply / Cancel while Stopped | Apply keeps and persists it; Cancel restores the prior live/saved API |
 | Factory Reset while Stopped / while Running | Stopped reconciles the default live API; Running does not hot-switch and reports restart-required preference |
 | JACK rate/period UI and generic saved values | Server values are read-only; prior ALSA/PipeWire preferences are not overwritten |
@@ -927,7 +955,6 @@ measurements and must be repeated. PipeWire-JACK remains an optional smoke test.
 | Start at zero, a nonzero barline, mid-measure on a note; stopped locate; rolling locate; commands from Ardour and MuseScore; twenty repeated cycles | Each preparation anchors the first rendered block to the requested frame without a stale first note or duplicate command |
 | Native timing, direct JACK-port capture, periods 256/1,024/2,048/4,096 | First emitted transient versus the grid-aligned reference WAV is within 1 ms with no period-scaled residual |
 | Ardour Automatic, direct and bus routes, periods 256/1,024/2,048/4,096 | Compensated recorded placement versus the reference WAV is within 1 ms on both routes; record separately whether Automatic passes |
-| Explicit Align with Capture Time, direct and bus routes, periods 256/1,024/2,048/4,096 | Supported fallback is within 1 ms on both routes when Automatic is not; do not shift MuseScore source time to compensate |
 | First sustained note with pre-roll/already-running recorder | Pitch, attack, and duration match a later identical note; an immediate Ardour recording may omit only the initial attack |
 | Ten-minute native direct and Ardour-routed runs | Initial absolute offset and early-to-final offset are recorded separately; the change is within 1 ms |
 | PipeWire-JACK smoke, if installed | Open, stereo audio, start/stop/locate in both directions |
@@ -969,7 +996,29 @@ On 2026-08-03, from local branch `jack-4.7d` based on
   drift measurement was made. Section 5.2 remains unchecked and is the release
   gate.
 
-### 5.4 Completion checklist
+### 5.4 Verified local `jack-4.7e` evidence
+
+On 2026-08-03, from local branch `jack-4.7e` based on
+`ee24b094c3685e77a3919079198c2a3b06e9f7ae`:
+
+- `cmake --build build.debug --target MuseScoreStudio -j6` passed with JACK
+  enabled, including QML ahead-of-time compilation of the changed Preferences
+  pages.
+- `build.debug/src/framework/audio/tests/muse_audio_jack_tests` passed all 17
+  callback/transport tests, and `muse_audio_tests` passed all 36 shared audio
+  tests.
+- A fresh build configured with `MUSE_MODULE_AUDIO_JACK=OFF` built the full
+  `MuseScoreStudio` target and `muse_audio_tests`; all 36 tests passed. `ldd`
+  showed no libjack dependency. System HarfBuzz and MNXDOM were used because
+  dependency downloads are unavailable in the restricted build environment.
+- The implementation changes are confined to the Audio/MIDI Preferences model
+  and QML presentation/apply flow. The audio engine, JACK driver, settings
+  implementation, and Diagnostics work-mode controls are unchanged.
+- The warning choices, inline warning, project-save prompt, and completed
+  process restart still require a short interactive GUI check; no such GUI
+  session was run as part of these automated checks.
+
+### 5.5 Completion checklist
 
 Checked items below have direct build, automated-test, code-audit, or recorded
 PipeWire-JACK/Ardour evidence. Unchecked items remain external manual/CI
@@ -987,6 +1036,9 @@ qualification; they do not imply unfinished implementation code.
 - [ ] Preferences Apply/Cancel/Reset follows the focused live-driver
       reconciliation policy without recursive switching or switching under
       Running/Paused playback.
+- [ ] The Worker/Driver selection warning, Use-JACK-anyway path, persistent
+      inline warning, apply-and-restart button, and absence of a startup modal
+      pass the short interactive GUI check.
 - [x] Server rate/period become the active engine spec.
 - [x] Successful open/switch publishes the server-derived active spec exactly
       once; failed activation publishes none.
@@ -1017,9 +1069,10 @@ qualification; they do not imply unfinished implementation code.
       ordinary local behavior after disable, driver replacement, or server loss.
 - [ ] Missing server, normal backend switching, period change, xrun, and server
       loss meet the practical safety behavior.
-- [x] The 4.7d focused callback/state and shared-audio automated checks pass;
-      the user/external routing and API/Preferences boundaries passed focused
-      code audit. Earlier PipeWire-JACK workflow evidence is regression-only.
+- [x] The 4.7d focused callback/state and shared-audio automated checks plus the
+      4.7e JACK-on/JACK-off builds pass; the user/external routing and
+      API/Preferences boundaries passed focused code audit. Earlier
+      PipeWire-JACK workflow evidence is regression-only.
 - [ ] The extended native JACK2 manual matrix passes.
 - [x] Accepted limitations are recorded.
 - [x] PipeWire-JACK smoke is recorded when available (optional).

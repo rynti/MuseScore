@@ -29,8 +29,18 @@ import "internal"
 PreferencesPage {
     id: root
 
+    signal applyAndRestartRequested()
+
+    function restartApplication() {
+        audioMidiModel.restartApplication()
+    }
+
     AudioMidiPreferencesModel {
         id: audioMidiModel
+
+        onApplyAndRestartRequested: {
+            root.applyAndRestartRequested()
+        }
     }
 
     Component.onCompleted: {
@@ -45,12 +55,18 @@ PreferencesPage {
             currentAudioApiIndex: audioMidiModel.currentAudioApiIndex
             audioApiList: audioMidiModel.audioApiList()
             audioApiSelectionEnabled: audioMidiModel.audioApiSelectionEnabled
+            jackWorkerRpcWarningVisible: audioMidiModel.jackWorkerRpcWarningVisible
+            jackWorkModeName: audioMidiModel.jackWorkModeName
 
             navigation.section: root.navigationSection
             navigation.order: root.navigationOrderStart + 1
 
             onCurrentAudioApiIndexChangeRequested: function(newIndex) {
                 audioMidiModel.currentAudioApiIndex = newIndex
+            }
+
+            onUseWorkerRpcAndRestartRequested: {
+                audioMidiModel.useWorkerRpcAndRestart()
             }
         }
 

@@ -20,7 +20,9 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 import QtQuick
+import QtQuick.Layouts
 
+import Muse.Ui
 import Muse.UiComponents
 
 BaseSection {
@@ -31,8 +33,11 @@ BaseSection {
     property int currentAudioApiIndex: -1
     property var audioApiList: null
     property bool audioApiSelectionEnabled: true
+    property bool jackWorkerRpcWarningVisible: false
+    property string jackWorkModeName: ""
 
     signal currentAudioApiIndexChangeRequested(int newIndex)
+    signal useWorkerRpcAndRestartRequested()
 
     Row {
         spacing: 8
@@ -59,10 +64,73 @@ BaseSection {
         }
     }
 
+    Rectangle {
+        id: workerRpcWarning
+
+        readonly property color warningColor: "#D89400"
+
+        visible: root.jackWorkerRpcWarningVisible
+        width: parent.width
+        height: warningContent.implicitHeight + 24
+
+        color: Utils.colorWithAlpha(warningColor, 0.12)
+        border.color: warningColor
+        border.width: 1
+        radius: 4
+
+        ColumnLayout {
+            id: warningContent
+
+            anchors.fill: parent
+            anchors.margins: 12
+            spacing: 8
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                StyledIconLabel {
+                    Layout.alignment: Qt.AlignTop
+
+                    iconCode: IconCode.WARNING
+                    color: workerRpcWarning.warningColor
+                }
+
+                StyledTextLabel {
+                    Layout.fillWidth: true
+
+                    horizontalAlignment: Text.AlignLeft
+                    wrapMode: Text.WordWrap
+
+                    text: qsTrc(
+                              "preferences",
+                              "JACK is currently running in %1. JACK remains available, but latency-correct recording is not guaranteed. Worker RPC mode is recommended.")
+                          .arg(root.jackWorkModeName)
+                }
+            }
+
+            FlatButton {
+                Layout.alignment: Qt.AlignLeft
+
+                text: qsTrc("preferences", "Switch to Worker RPC and restart")
+                accentButton: true
+                isNarrow: true
+
+                navigation.name: "UseWorkerRpcButton"
+                navigation.panel: root.navigation
+                navigation.row: 2
+
+                onClicked: {
+                    root.useWorkerRpcAndRestartRequested()
+                }
+            }
+        }
+    }
+
     CommonAudioApiConfiguration {
         columnWidth: root.columnWidth
 
         navigation: root.navigation
-        navigationOrderStart: 2
+        navigationOrderStart: 3
     }
 }
