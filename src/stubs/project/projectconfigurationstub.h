@@ -52,6 +52,10 @@ public:
     void setUserProjectsPath(const muse::io::path_t& path) override;
     muse::async::Channel<muse::io::path_t> userProjectsPathChanged() const override;
     muse::io::path_t defaultUserProjectsPath() const override;
+    muse::io::path_t defaultOpenProjectsPath() const override;
+
+    muse::io::path_t defaultConvertFilePath() const override;
+    void setLastOpenedConvertFilePath(const muse::io::path_t& path) override;
 
     bool shouldAskSaveLocationType() const override;
     void setShouldAskSaveLocationType(bool shouldAsk) override;
@@ -118,6 +122,8 @@ public:
 
     QUrl dotComBugReportUrl() const override;
 
+    QUrl scoreUploadingGuidelinesUrl() const override;
+
     bool openDetailedProjectUploadedDialog() const override;
     void setOpenDetailedProjectUploadedDialog(bool show) override;
 
@@ -144,5 +150,10 @@ public:
 
     bool createBackupBeforeSaving() const override;
     void setCreateBackupBeforeSaving(bool create) override;
+
+    bool showConvertFileProcessingDialog() const override;
+    void setShowConvertFileProcessingDialog(bool show) override;
+
+    muse::io::path_t watchedConvertsJsonPath() const override;
 };
 }

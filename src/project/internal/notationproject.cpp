@@ -35,6 +35,7 @@
 #include "engraving/compat/engravingcompat.h"
 #include "engraving/dom/excerpt.h"
 #include "engraving/dom/masterscore.h"
+#include "engraving/dom/measurebase.h"
 #include "engraving/dom/repeatlist.h"
 #include "engraving/editing/editscoreproperties.h"
 #include "engraving/engravingerrors.h"
@@ -578,7 +579,10 @@ muse::Ret NotationProject::savePage(const muse::io::path_t& path, const size_t p
     range.startStaffIdx = 0;
     range.endStaffIdx = score->nstaves();
     range.startMeasure = systems.front()->first();
-    range.endMeasure = systems.back()->last();
+    // StaffWrite::writeStaff stops before reaching endMeasure, so use the measure after
+    // the last one we want, otherwise the page's last measure/frame is dropped
+    MeasureBase* lastMeasure = systems.back()->last();
+    range.endMeasure = lastMeasure ? lastMeasure->next() : nullptr;
 
     write::WriteContext ctx(score);
     ctx.setRange(range);
@@ -1023,6 +1027,11 @@ void NotationProject::markAsUnsaved()
 
 void NotationProject::listenIfNeedSaveChanges()
 {
+    if (isCloudProject()) {
+        //! NOTE: master is always open once loaded; set before listening so it doesn't count as a change
+        m_masterNotation->notation()->setIsOpen(true);
+    }
+
     m_masterNotation->notation()->undoStack()->changesChannel().onReceive(this, [this](const ScoreChanges&) {
         bool isStackClean = m_masterNotation && m_masterNotation->notation()->undoStack()->isStackClean();
 

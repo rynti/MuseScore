@@ -2573,22 +2573,10 @@ void TWrite::write(const Pedal* item, XmlWriter& xml, WriteContext& ctx)
         return;
     }
     xml.startElement(item);
-
-    for (auto i : {
-        Pid::END_HOOK_TYPE,
-        Pid::LINE_VISIBLE,
-        Pid::BEGIN_HOOK_TYPE,
-        Pid::BEGIN_TEXT_OFFSET,
-        Pid::CONTINUE_TEXT_OFFSET,
-        Pid::END_TEXT_OFFSET
-    }) {
-        writeProperty(item, xml, i);
-    }
-    for (const StyledProperty& spp : *item->styledProperties()) {
-        writeProperty(item, xml, spp.pid);
-    }
-
-    writeProperties(static_cast<const SLine*>(item), xml, ctx);
+    writeProperty(item, xml, Pid::PLACEMENT);
+    writeProperty(item, xml, Pid::OFFSET);
+    writeProperty(item, xml, Pid::TEXT_SIZE_SPATIUM_DEPENDENT);
+    writeProperties(static_cast<const TextLineBase*>(item), xml, ctx);
     xml.endElement();
 }
 

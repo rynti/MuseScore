@@ -35,6 +35,8 @@ target_sources(muse_cloud PRIVATE
     internal/abstractcloudservice.h
     internal/abstractcloudservice.cpp
     musescorecom/imusescorecomservice.h
+    musescorecom/imusescorecomconvertservice.h
+    musescorecom/converttypes.h
     audiocom/iaudiocomservice.h
     audiocom/audiocomservice.h
     audiocom/audiocomservice.cpp
@@ -49,6 +51,10 @@ if (MUSE_MODULE_CLOUD_MUSESCORECOM)
 endif()
 
 target_link_libraries(muse_cloud PRIVATE Qt::Network Qt::NetworkAuth)
+
+if (MUSE_MODULE_CLOUD_TESTS)
+    add_subdirectory(tests)
+endif()
 
 if (MUSE_MODULE_CLOUD_QML)
     add_subdirectory(qml/Muse/Cloud)

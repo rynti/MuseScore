@@ -1,11 +1,10 @@
 # Focused Linux JACK Integration Plan
 
-> **Status:** `jack-4.7e` adds focused Worker-RPC guidance to the frame-accurate
-> `jack-4.7d` implementation. The focused tests and JACK-on/JACK-off
-> Linux builds pass as recorded in sections 5.3 and 5.4. Earlier PipeWire-JACK checks
-> remain useful regression evidence, but neither they nor the automated tests
-> qualify the corrected timing contract. Native JACK2 with Ardour remains the
-> mandatory release gate described in section 5.2.
+> **Status:** `jack-4.7f` integrates the exact official `v4.7.6` release
+> (`96480d58445e3b24b230a3fe7d4725d639aa2eb3`) with the existing `jack-4.7e`
+> implementation. This is a development update; native JACK2 with Ardour remains
+> the mandatory release gate described in section 5.2. See section 5.5 for the
+> integration changes, local validation, and remaining manual checks.
 >
 > **Goal in one sentence:** make current MuseScore Studio genuinely useful as a
 > Linux JACK client, with stereo audio and bidirectional JACK transport control
@@ -21,8 +20,10 @@
 
 The code references below were rechecked on 2026-07-22 against branch
 `jack-4.7` at the official `v4.7.4` tag, commit
-`7688c005ad963ba09ee715aae53dbc7e8c9d5ef8`. Recheck the named files if
-implementation begins after a substantial audio/playback refactor.
+`7688c005ad963ba09ee715aae53dbc7e8c9d5ef8`. The factory/controller, playback,
+and build/test integration were rechecked against `v4.7.6` on 2026-11-03;
+section 5.5 records the resulting changes. Recheck other historical file
+references after a substantial audio/playback refactor.
 
 ## 1. Scope authority
 
@@ -292,7 +293,7 @@ offset.
 
 ### 3.1 Keep and repair the existing extension points
 
-The checked-in JACK directory is a stale scaffold, not working current code:
+At the original official `v4.7.4` base, the JACK directory was a stale scaffold:
 
 - `jackaudiodriver.h` overrides driver methods that no longer exist and misses
   the current `defaultDevice()` contract.
@@ -302,8 +303,15 @@ The checked-in JACK directory is a stale scaffold, not working current code:
 - `AudioDriverController::createDriver()` returns JACK for every requested API
   whenever JACK is compiled, and `availableAudioApiList()` returns only JACK.
 
-Rewrite that small driver against today's `IAudioDriver`; do not preserve its
-globals or obsolete compatibility methods. Retain these useful current paths:
+Those defects were repaired by the JACK implementation. In `jack-4.7f`,
+upstream's new `IAudioDriverFactory` owns driver construction/enumeration and
+carries the corrected Linux backend selection. `AudioDriverController` still
+owns successful-open installation, rollback, active-spec publication, and JACK
+transport lifecycle. Upstream's last-valid-spec recovery is retained, with the
+remembered specification reset when the installed driver changes.
+
+The driver implements today's `IAudioDriver` without the obsolete globals or
+compatibility methods. Retain these useful current paths:
 
 - `IAudioDriver::Spec::callback` is the audio pull boundary.
 - `AudioDriverController` owns API selection, active-spec publication, and
@@ -1018,7 +1026,102 @@ On 2026-08-03, from local branch `jack-4.7e` based on
   process restart still require a short interactive GUI check; no such GUI
   session was run as part of these automated checks.
 
-### 5.5 Completion checklist
+### 5.5 Verified local `jack-4.7f` evidence
+
+The `jack-4.7f` branch merges official `v4.7.6`, commit
+`96480d58445e3b24b230a3fe7d4725d639aa2eb3`, into `jack-4.7e`, commit
+`455ad2677ea5be921eccf0c2703b099dcb1f2a47`, without rewriting earlier branches.
+The application version remains upstream's `4.7.6`.
+
+The integration adopts upstream's driver factory and device recovery while
+retaining JACK selection, transport generations, failed-switch restoration,
+server-owned timing, and Worker-RPC guidance. Playback retains both upstream's
+score-review restrictions/audio-settings initialization and the existing
+user/external transport boundary. RPC packing tests remain isolated from the
+normally packed audio code as required by upstream.
+
+A live debug-build smoke test exposed a score-opening assertion in
+`EventAudioSource::seek()`: `Mixer::addChannel()` anchored an event source
+before `TrackSequence` initialized its synthesizer. The minimal correction
+moves the existing input-parameter initialization ahead of mixer insertion.
+This enables ordinary score loading and the required newly-added-source
+anchoring; a driver-local change cannot repair track-construction order.
+No renderer or callback architecture changes were needed.
+
+On 2026-11-03:
+
+- Fresh Debug JACK-on and JACK-off builds produced and installed
+  `MuseScoreStudio` in separate prefixes; both installed binaries reported
+  `MuseScore4Development 4.7.6`.
+- JACK-on `muse_audio_tests` passed 40 tests; `muse_audio_jack_tests` passed 17;
+  `muse_audio_rpcpacker_tests` passed 26. JACK-off passed the same 40 shared
+  tests and 26 RPC-packing tests. The suites were rerun after the source-order fix.
+- `notationscene_qml_tests` passed all 12 tests, including the existing
+  user-origin seek regressions. The full application build compiled the
+  Preferences QML/model integration.
+- JACK-off `ldd`/`readelf` showed no libjack dependency, the generated framework
+  configuration disabled JACK, and factory tests covered exclusion from the API
+  list and rejection of JACK construction. JACK-on factory tests covered
+  coexistence, explicit selection, and forced ALSA.
+- The imported upstream controller tests retain device-reopen recovery and
+  rollback coverage. Focused additions cover failed JACK selection, restoration
+  from a blank spec, per-driver spec recovery, and server-owned JACK settings.
+
+Local toolchain accommodations (not tracked source changes): GCC 16.2.1,
+Qt 6.12.0, system HarfBuzz 15.0.0 and MNXDOM 2.1. The ordinary unity build hit
+an Extensions `Type` ambiguity in Qt-generated C++, and Qt's big font resources
+hit a protected `qt_resourceFeatureZstd` copy-relocation link error. A local
+`CMAKE_PROJECT_MuseScore_INCLUDE` hook deferred the following target properties
+until the end of configuration:
+
+```cmake
+set_target_properties(muse_extensions_qml PROPERTIES UNITY_BUILD OFF)
+get_property(resource_targets DIRECTORY "${CMAKE_SOURCE_DIR}/src/engraving"
+             PROPERTY BUILDSYSTEM_TARGETS)
+foreach(resource_target IN LISTS resource_targets)
+    if(resource_target MATCHES "^rcc_object_")
+        set_target_properties(${resource_target}
+                              PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    endif()
+endforeach()
+```
+
+Both configurations used `MUSE_ENABLE_UNIT_TESTS=ON`,
+`MUE_COMPILE_USE_SYSTEM_HARFBUZZ=ON`, and
+`MUE_COMPILE_USE_SYSTEM_MNXDOM=ON`. In addition to the application/test targets,
+`translations` and `manpages` were built before `cmake --install`. The validation
+builds are `build.jack-4.7f` and `build.nojack-4.7f`; their separate install
+prefixes are `build.install.jack-4.7f` and `build.install.nojack-4.7f`.
+
+Live PipeWire-JACK 3.1610.0 smoke used isolated settings, Worker RPC, a temporary
+16-bar piano score, and a temporary capture client at 48 kHz / 1,024 frames.
+After the track-initialization correction, the application opened the score
+without the original assertion and exposed both expected output ports. One
+GDB-instrumented run captured nonzero stereo audio and completed external
+start, rolling locate to four seconds, and stop. Uninstrumented attempts,
+including a repeat with a longer startup wait, instead reported
+`JACK is rolling without a prepared MuseScore transport episode` and remained
+silent. A standalone slow-sync probe confirmed that this server waits while a
+client returns not-ready. The instrumented success does **not** establish a
+repeatable PipeWire transport pass; this remains an unresolved smoke-test
+limitation, with no timing qualification claimed. No callback behavior was
+changed to accommodate the instrumentation-dependent result. The test restored
+the original stopped transport position and removed its temporary clients.
+
+Both installed binaries also opened the temporary score and saved separate
+nonempty `.mscz` files through the converter, exiting normally. No user scores
+or normal application settings were used by these checks.
+
+Accepted remaining validation: the Worker/Driver warning choices, Preferences
+Apply/Cancel/Reset and restart flow, MuseScore-originated live transport controls,
+and the full native JACK2/Ardour matrix still need direct interactive checks.
+Native `jackd` is unavailable on this host; Ardour 9 is installed but was not
+used for qualification. The local Qt workarounds and incomplete live smoke mean
+this is a build/test-validated development integration, not a qualified release.
+The section 5.2 native gate and earlier unchecked completion items remain in
+force.
+
+### 5.6 Completion checklist
 
 Checked items below have direct build, automated-test, code-audit, or recorded
 PipeWire-JACK/Ardour evidence. Unchecked items remain external manual/CI

@@ -36,25 +36,6 @@
 
 #if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
 #include <QtEnvironmentVariables>
-#include "audio/driver/platform/lin/alsaaudiodriver.h"
-#ifdef MUSE_MODULE_AUDIO_PIPEWIRE
-#include "audio/driver/platform/lin/pwaudiodriver.h"
-#endif
-#endif
-
-#ifdef Q_OS_WIN
-#include "audio/driver/platform/win/wasapiaudiodriver.h"
-#ifdef MUSE_MODULE_AUDIO_ASIO
-#include "audio/driver/platform/win/asio/asioaudiodriver.h"
-#endif
-#endif
-
-#ifdef Q_OS_MACOS
-#include "audio/driver/platform/osx/osxaudiodriver.h"
-#endif
-
-#ifdef Q_OS_WASM
-#include "audio/driver/platform/web/webaudiodriver.h"
 #endif
 
 #include "log.h"
@@ -668,118 +649,15 @@ std::string AudioDriverController::canonicalAudioApi(const std::string& name) co
     return name;
 }
 
-IAudioDriverPtr AudioDriverController::createDriver(const std::string& name) const
-{
-#ifdef Q_OS_WIN
-    if (name == "ASIO") {
-#ifdef MUSE_MODULE_AUDIO_ASIO
-        return std::shared_ptr<IAudioDriver>(new AsioAudioDriver());
-#else
-        LOGW() << "ASIO is required but is not available, WASAPI will be used";
-#endif
-    }
-
-    // required WASAPI or fallback
-    return std::shared_ptr<IAudioDriver>(new WasapiAudioDriver());
-#endif
-
-#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
-    if (qEnvironmentVariableIsSet("MUSESCORE_FORCE_ALSA")) {
-        if (name != "ALSA") {
-            LOGW() << "required: " << name << ", but is set MUSESCORE_FORCE_ALSA";
-        }
-        return std::make_shared<AlsaAudioDriver>();
-    }
-
-    if (name == "ALSA") {
-        return std::make_shared<AlsaAudioDriver>();
-    }
-
-    if (name == "PipeWire") {
-#ifdef MUSE_MODULE_AUDIO_PIPEWIRE
-        auto driver = std::make_shared<PwAudioDriver>();
-        if (driver->connectedToPwServer()) {
-            return driver;
-        } else {
-            LOGE() << "PipeWire driver failed to connect to server";
-        }
-#else
-        LOGW() << "PipeWire is required but is not available";
-#endif
-
-        return nullptr;
-    }
-
-#if defined(MUSE_MODULE_AUDIO_JACK) && defined(Q_OS_LINUX)
-    if (name == "JACK") {
-        return std::make_shared<JackAudioDriver>();
-    }
-#endif
-
-    LOGE() << "Unknown or unavailable audio driver: " << name;
-    return nullptr;
-#endif
-
-#ifdef Q_OS_MACOS
-    UNUSED(name);
-    return std::shared_ptr<IAudioDriver>(new OSXAudioDriver());
-#endif
-
-#ifdef Q_OS_WASM
-    UNUSED(name);
-    return std::shared_ptr<IAudioDriver>(new WebAudioDriver());
-#endif
-
-    return nullptr;
-}
-
 std::vector<std::string> AudioDriverController::availableAudioApiList() const
 {
-    std::vector<std::string> names;
-#ifdef Q_OS_WIN
-    names.push_back("WASAPI");
-#ifdef MUSE_MODULE_AUDIO_ASIO
-    names.push_back("ASIO");
-#endif
-
-    return names;
-#endif // Q_OS_WIN
-
-#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
-    names.push_back("ALSA");
-    if (qEnvironmentVariableIsSet("MUSESCORE_FORCE_ALSA")) {
-        return names;
-    }
-
-#ifdef MUSE_MODULE_AUDIO_PIPEWIRE
-    names.push_back("PipeWire");
-#endif
-
-#if defined(MUSE_MODULE_AUDIO_JACK) && defined(Q_OS_LINUX)
-    names.push_back("JACK");
-#endif
-
-    return names;
-#endif // Q_OS_LINUX
-
-#ifdef Q_OS_MACOS
-    names.push_back("CoreAudio");
-    return names;
-#endif
-
-#ifdef Q_OS_WASM
-    names.push_back("WASM");
-    return names;
-#endif
-
-
-    return names;
+    return audioDriverFactory()->availableAudioDrivers();
 }
 
 bool AudioDriverController::tryOpenDriver(const std::string& name, const IAudioDriver::Spec& spec, bool tryDefaultDevice,
                                           OpenedDriver& result)
 {
-    IAudioDriverPtr driver = createDriver(canonicalAudioApi(name));
+    IAudioDriverPtr driver = audioDriverFactory()->createDriver(canonicalAudioApi(name));
     if (!driver) {
         return false;
     }
@@ -854,6 +732,9 @@ void AudioDriverController::setNewDriver(IAudioDriverPtr newDriver)
         m_audioDriver->activeSpecChanged().disconnect(this);
     }
 
+    if (m_audioDriver != newDriver) {
+        m_lastValidSpec = {};
+    }
     m_audioDriver = newDriver;
 
     if (m_audioDriver) {
@@ -877,6 +758,12 @@ void AudioDriverController::setNewDriver(IAudioDriverPtr newDriver)
                 return;
             }
 
+            if (spec.isValid()) {
+                m_lastValidSpec = spec;
+            } else {
+                LOGW() << "Driver reported an invalid spec";
+            }
+
             m_activeSpecChanged.send(spec);
 
             async::Async::call(this, [this, subscribedDriver, spec]() {
@@ -898,6 +785,9 @@ void AudioDriverController::setNewDriver(IAudioDriverPtr newDriver)
 
 void AudioDriverController::publishActiveSpec(const IAudioDriver::Spec& spec)
 {
+    if (spec.isValid()) {
+        m_lastValidSpec = spec;
+    }
     m_activeSpecChanged.send(spec);
 
     configuration()->setAudioOutputDeviceId(spec.deviceId);
@@ -931,6 +821,9 @@ bool AudioDriverController::changeCurrentAudioApi(const std::string& name)
         return true;
     }
 
+    if (!previousSpec.isValid()) {
+        previousSpec = m_lastValidSpec;
+    }
     if (!previousSpec.isValid()) {
         previousSpec.deviceId = DEFAULT_DEVICE_ID;
         previousSpec.output = configuration()->desiredOutputSpec();
@@ -1053,7 +946,7 @@ void AudioDriverController::close()
 
 bool AudioDriverController::isOpened() const
 {
-    IF_ASSERT_FAILED(m_audioDriver) {
+    if (!m_audioDriver) {
         return false;
     }
     return m_audioDriver->isOpened();
@@ -1061,7 +954,7 @@ bool AudioDriverController::isOpened() const
 
 const IAudioDriver::Spec& AudioDriverController::activeSpec() const
 {
-    IF_ASSERT_FAILED(m_audioDriver) {
+    if (!m_audioDriver) {
         static IAudioDriver::Spec dummy;
         return dummy;
     }
@@ -1083,8 +976,9 @@ AudioDeviceID AudioDriverController::outputDevice() const
 
 bool AudioDriverController::selectOutputDevice(const AudioDeviceID& deviceId)
 {
-    IF_ASSERT_FAILED(m_audioDriver) {
-        return false;
+    if (!m_audioDriver) {
+        configuration()->setAudioOutputDeviceId(deviceId);
+        return true;
     }
 
     if (m_audioDriver->name() == "JACK" && deviceId != DEFAULT_DEVICE_ID) {
@@ -1092,13 +986,13 @@ bool AudioDriverController::selectOutputDevice(const AudioDeviceID& deviceId)
         return false;
     }
 
-    if (!m_audioDriver->isOpened()) {
+    if (!m_audioDriver->isOpened() && !m_lastValidSpec.isValid()) {
         configuration()->setAudioOutputDeviceId(deviceId);
         return true;
     }
 
     const IAudioDriver::Spec oldSpec = m_audioDriver->activeSpec();
-    if (deviceId == oldSpec.deviceId) {
+    if (m_audioDriver->isOpened() && deviceId == oldSpec.deviceId) {
         // In particular, JACK exposes only this one pseudo-device. Reopening
         // the same live client here would discard its fresh transport epoch
         // without passing through the controller's generation/state install.
@@ -1111,20 +1005,10 @@ bool AudioDriverController::selectOutputDevice(const AudioDeviceID& deviceId)
 
     IAudioDriver::Spec spec;
     spec.deviceId = deviceId;
-    spec.callback = oldSpec.callback;
+    spec.callback = m_callback;
     spec.output = configuration()->desiredOutputSpec();
 
-    m_audioDriver->close();
-    bool ok = m_audioDriver->open(spec, nullptr);
-    if (!ok) {
-        m_audioDriver->close();
-        LOGE() << "Failed to select device: " << deviceId << ", returning to: " << oldSpec.deviceId;
-        bool restored = m_audioDriver->open(oldSpec, nullptr);
-        if (!restored) {
-            LOGE() << "Failed to restore previous device: " << oldSpec.deviceId;
-        }
-    }
-    return ok;
+    return reopenWithSpec(spec);
 }
 
 async::Notification AudioDriverController::outputDeviceChanged() const
@@ -1138,8 +1022,23 @@ void AudioDriverController::handleOutputDeviceChange()
         return;
     }
 
+    // Some drivers reset their internal spec to a blank state after a failed open attempt, so fall
+    // back to the last spec that was actually confirmed to work
     IAudioDriver::Spec spec = m_audioDriver->activeSpec();
-    LOGI() << "Checking output device: " << spec.deviceId;
+    if (!spec.isValid()) {
+        if (m_lastValidSpec.isValid()) {
+            LOGW() << "Active spec is invalid, using last valid spec";
+            spec = m_lastValidSpec;
+        } else {
+            LOGW() << "Active spec is invalid, using default spec";
+            spec.deviceId = DEFAULT_DEVICE_ID;
+            spec.output = configuration()->defaultOutputSpec();
+            spec.callback = m_callback;
+        }
+    }
+
+    LOGI() << "Reopening output device, " << spec;
+
     m_audioDriver->close();
     bool ok = m_audioDriver->open(spec, nullptr);
     if (!ok) {
@@ -1151,8 +1050,14 @@ void AudioDriverController::handleOutputDeviceChange()
         if (!ok) {
             m_audioDriver->close();
             LOGE() << "Failed to reopen default device on " << m_audioDriver->name() << ", switching to default audio driver";
-            switchToDefaultAudioDriver();
+            ok = switchToDefaultAudioDriver();
         }
+    }
+
+    if (ok) {
+        LOGI() << "Reopened output device: " << m_audioDriver->activeSpec();
+    } else {
+        LOGE() << "Failed to reopen output device, will retry on next device list change";
     }
 
     m_retryOpenDevice = !ok;
@@ -1198,6 +1103,25 @@ bool AudioDriverController::switchToDefaultAudioDriver(IAudioDriver::Spec* activ
     return true;
 }
 
+bool AudioDriverController::reopenWithSpec(const IAudioDriver::Spec& spec)
+{
+    IAudioDriver::Spec oldSpec = m_audioDriver->activeSpec();
+    if (!oldSpec.isValid()) {
+        oldSpec = m_lastValidSpec;
+    }
+
+    m_audioDriver->close();
+    if (m_audioDriver->open(spec, nullptr)) {
+        m_retryOpenDevice = false;
+        return true;
+    }
+
+    m_audioDriver->close();
+    LOGE() << "Failed to reopen with: " << spec << ", returning to: " << oldSpec;
+    m_retryOpenDevice = !m_audioDriver->open(oldSpec, nullptr);
+    return false;
+}
+
 void AudioDriverController::updateOutputSpec(const OutputSpec& spec)
 {
     if (!spec.isValid()) {
@@ -1231,9 +1155,8 @@ void AudioDriverController::changeBufferSize(samples_t samples)
 
     if (m_audioDriver->isOpened()) {
         IAudioDriver::Spec spec = m_audioDriver->activeSpec();
-        m_audioDriver->close();
         spec.output.samplesPerChannel = samples;
-        ok = m_audioDriver->open(spec, &spec);
+        ok = reopenWithSpec(spec);
     }
 
     if (ok) {
@@ -1276,9 +1199,8 @@ void AudioDriverController::changeSampleRate(sample_rate_t sampleRate)
 
     if (m_audioDriver->isOpened()) {
         IAudioDriver::Spec spec = m_audioDriver->activeSpec();
-        m_audioDriver->close();
         spec.output.sampleRate = sampleRate;
-        ok = m_audioDriver->open(spec, &spec);
+        ok = reopenWithSpec(spec);
     }
 
     if (ok) {

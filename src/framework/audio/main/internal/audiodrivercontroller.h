@@ -30,6 +30,7 @@
 
 #include "modularity/ioc.h"
 #include "audio/main/iaudioconfiguration.h"
+#include "audio/main/internal/iaudiodriverfactory.h"
 #include "audio/common/rpc/irpcchannel.h"
 
 namespace muse::audio {
@@ -37,7 +38,9 @@ class JackAudioDriver;
 
 class AudioDriverController : public IAudioDriverController, public Contextable, public async::Asyncable
 {
+public:
     GlobalInject<IAudioConfiguration> configuration;
+    GlobalInject<IAudioDriverFactory> audioDriverFactory;
     ContextInject<rpc::IRpcChannel> rpcChannel = { this };
 
 public:
@@ -102,7 +105,6 @@ private:
     };
 
     std::string canonicalAudioApi(const std::string& name) const;
-    IAudioDriverPtr createDriver(const std::string& name) const;
     bool tryOpenDriver(const std::string& name, const IAudioDriver::Spec& spec, bool tryDefaultDevice, OpenedDriver& result);
     void installOpenedDriver(const OpenedDriver& openedDriver, const std::string& previousApi = {});
     void setNewDriver(IAudioDriverPtr newDriver);
@@ -110,6 +112,7 @@ private:
 
     void handleOutputDeviceChange();
     bool switchToDefaultAudioDriver(IAudioDriver::Spec* activeSpec = nullptr);
+    bool reopenWithSpec(const IAudioDriver::Spec& spec);
     void updateOutputSpec(const OutputSpec& spec);
 
     JackAudioDriver* jackDriver() const;
@@ -127,6 +130,7 @@ private:
 
     IAudioDriver::Callback m_callback;
     IAudioDriverPtr m_audioDriver;
+    IAudioDriver::Spec m_lastValidSpec;
     async::Notification m_currentAudioApiChanged;
     async::Notification m_availableOutputDevicesChanged;
     async::Channel<IAudioDriver::Spec> m_activeSpecChanged;

@@ -87,11 +87,7 @@ option(MUE_BUILD_IMPEXP_BB_MODULE "Build importexport bb module" ON)
 option(MUE_BUILD_IMPEXP_BWW_MODULE "Build importexport bww module" ON)
 option(MUE_BUILD_IMPEXP_CAPELLA_MODULE "Build importexport capella module" ON)
 option(MUE_BUILD_IMPEXP_MIDI_MODULE "Build importexport midi module" ON)
-if (OS_IS_WIN) # requires xxd to be installed on Windows; turned ON on CI
-    option(MUE_BUILD_IMPEXP_MNX_MODULE "Build importexport mnx module" OFF)
-else()
-    option(MUE_BUILD_IMPEXP_MNX_MODULE "Build importexport mnx module" ON)
-endif()
+option(MUE_BUILD_IMPEXP_MNX_MODULE "Build importexport mnx module" ON)
 option(MUE_BUILD_IMPEXP_MUSEDATA_MODULE "Build importexport musedata module" ON)
 option(MUE_BUILD_IMPEXP_MUSICXML_MODULE "Build importexport musicxml module" ON)
 option(MUE_BUILD_IMPEXP_OVE_MODULE "Build importexport ove module" ON)
@@ -113,6 +109,7 @@ option(MUE_BUILD_INSTRUMENTSSCENE_QML "Build instruments scene QML" ${MUE_BUILD_
 
 option(MUE_BUILD_MUSESOUNDS_MODULE "Build MuseSounds module" ON)
 option(MUE_BUILD_MUSESOUNDS_QML "Build musesounds QML" ${MUE_BUILD_MUSESOUNDS_MODULE})
+option(MUE_BUILD_MUSESOUNDS_TESTS "Build musesounds tests" ${MUE_BUILD_MUSESOUNDS_MODULE})
 
 option(MUE_BUILD_NOTATION_MODULE "Build notation module" ON) 
 option(MUE_BUILD_NOTATION_TESTS "Build notation tests" ${MUE_BUILD_NOTATION_MODULE})

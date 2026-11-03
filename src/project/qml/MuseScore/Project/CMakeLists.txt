@@ -30,6 +30,12 @@ qt_add_qml_module(project_qml
         enums.h
         internal/Export/exportdialogmodel.cpp
         internal/Export/exportdialogmodel.h
+        internal/ConvertFileToScore/convertfiletoscoremodel.cpp
+        internal/ConvertFileToScore/convertfiletoscoremodel.h
+        internal/ConvertFileToScore/filelistmodel.cpp
+        internal/ConvertFileToScore/filelistmodel.h
+        internal/ConvertFileToScore/reviewscorequalitymodel.cpp
+        internal/ConvertFileToScore/reviewscorequalitymodel.h
         internal/NewScore/additionalinfomodel.cpp
         internal/NewScore/additionalinfomodel.h
         internal/NewScore/newscoremodel.cpp
@@ -60,6 +66,24 @@ qt_add_qml_module(project_qml
         AudioGenerationSettings.qml
         AudioGenerationSettingsDialog.qml
         ExportDialog.qml
+        ConvertFileProcessingDialog.qml
+        ConvertFileToScoreDialog.qml
+        DeleteCloudScoreDialog.qml
+        ReviewScoreQualityPanel.qml
+        internal/ConvertFileToScore/SelectFilePage.qml
+        internal/ConvertFileToScore/LinkPastePanel.qml
+        internal/ConvertFileToScore/ConvertFromLinkPanel.qml
+        internal/ConvertFileToScore/LinkEntryPage.qml
+        internal/ConvertFileToScore/SelectedFilesPage.qml
+        internal/ConvertFileToScore/MultipleFilesPanel.qml
+        internal/ConvertFileToScore/SingleFilePanel.qml
+        internal/ConvertFileToScore/FileItem.qml
+        internal/ConvertFileToScore/FileRequirements.qml
+        internal/ConvertFileToScore/FileRequirementsPopup.qml
+        internal/ConvertFileToScore/ConvertButtonBox.qml
+        internal/ConvertFileToScore/SaveAsField.qml
+        internal/ConvertFileToScore/ScoreQualityRatingPanel.qml
+        internal/ConvertFileToScore/ScoreQualityFeedbackPanel.qml
         internal/Export/AudioSettings.qml
         internal/Export/ExportOptionItem.qml
         internal/Export/ExportOptionsView.qml
@@ -104,7 +128,9 @@ qt_add_qml_module(project_qml
         internal/ScoresPage/CloudScoreIndicatorButton.qml
         internal/ScoresPage/RecentScoresView.qml
         internal/ScoresPage/ScoreGridItem.qml
+        internal/ScoresPage/ScoreItemMenuButton.qml
         internal/ScoresPage/ScoreListItem.qml
+        internal/ScoresPage/ScoreProcessingPlaceholder.qml
         internal/ScoresPage/ScoreThumbnail.qml
         Message.qml
         MigrationDialog.qml
@@ -128,6 +154,7 @@ qt_add_qml_module(project_qml
         internal/ScoresPage/images/Placeholder_Other.png
         resources/AudioCom_Waveform.png
         resources/PublishScores.png
+        resources/ScoreProcessing.png
     IMPORTS
         TARGET muse_ui_qml
         TARGET muse_uicomponents_qml
@@ -136,6 +163,11 @@ qt_add_qml_module(project_qml
 
 fixup_qml_module_dependencies(project_qml)
 
+target_link_libraries(project_qml PRIVATE
+    muse::uicomponents_qml
+    notationscene_qml
+)
+
 # Necessary for the auto-generated sources
 target_include_directories(project_qml PRIVATE
     internal
@@ -143,4 +175,9 @@ target_include_directories(project_qml PRIVATE
     internal/NewScore
     internal/Properties
     internal/ScoresPage
+    internal/ConvertFileToScore
 )
+
+if (MUE_BUILD_PROJECT_TESTS)
+    add_subdirectory(tests)
+endif()

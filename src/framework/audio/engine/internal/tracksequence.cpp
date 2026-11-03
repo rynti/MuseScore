@@ -109,6 +109,9 @@ RetVal2<TrackId, AudioParams> TrackSequence::addTrack(const std::string& trackNa
 
     EventAudioSourcePtr source = std::make_shared<EventAudioSource>(newId, playbackData, onOffStreamReceived, iocContext());
     source->setOutputSpec(audioEngine()->outputSpec());
+    // Adding a source anchors it to the mixer's logical position. Resolve its
+    // synthesizer before that initial seek (also required for JACK starts).
+    source->applyInputParams(requiredParams.in);
 
     RetVal<MixerChannelPtr> channel = mixer()->addChannel(newId, source);
     if (!channel.ret) {
@@ -126,7 +129,6 @@ RetVal2<TrackId, AudioParams> TrackSequence::addTrack(const std::string& trackNa
     trackPtr->setPlaybackData(playbackData);
     trackPtr->inputHandler = source;
     trackPtr->outputHandler = channel.val;
-    trackPtr->setInputParams(requiredParams.in);
     trackPtr->setOutputParams(requiredParams.out);
 
     m_trackAboutToBeAdded.send(trackPtr);

@@ -31,6 +31,8 @@
 #include "cloud/cloudtypes.h"
 #include "cloud/iauthorizationservice.h"
 
+#include "imusescorecomconvertservice.h"
+
 class QIODevice;
 class QString;
 
@@ -45,6 +47,8 @@ public:
     virtual ~IMuseScoreComService() = default;
 
     virtual IAuthorizationServicePtr authorization() = 0;
+
+    virtual IMuseScoreComConvertServicePtr convert() = 0;
 
     virtual QUrl scoreManagerUrl() const = 0;
 
@@ -63,5 +67,7 @@ public:
 
     virtual ProgressPtr downloadScore(int scoreId, DevicePtr scoreData, const QString& hash = QString(),
                                       const QString& secret = QString()) = 0;
+
+    virtual async::Promise<Ret> deleteScore(int scoreId) = 0;
 };
 }
