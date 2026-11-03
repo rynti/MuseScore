@@ -21,6 +21,9 @@
  */
 #include "mixer.h"
 
+#include <algorithm>
+#include <limits>
+
 #include "audio/common/audiosanitizer.h"
 #include "audio/common/audioerrors.h"
 
@@ -88,6 +91,8 @@ RetVal<MixerChannelPtr> Mixer::addChannel(const TrackId trackId, ITrackAudioInpu
         result.ret = make_ret(Err::InvalidAudioSource);
         return result;
     }
+
+    source->seek(playbackPosition());
 
     MixerChannelPtr channel = std::make_shared<MixerChannel>(trackId, m_outputSpec, source, this, iocContext());
     std::weak_ptr<MixerChannel> channelWeakPtr = channel;
@@ -180,6 +185,7 @@ void Mixer::setOutputSpec(const OutputSpec& spec)
 {
     ONLY_AUDIO_ENGINE_THREAD;
 
+    m_clockTimeConverter.reset();
     m_outputSpec = spec;
 
     AbstractAudioSource::setOutputSpec(spec);
@@ -217,15 +223,26 @@ msecs_t Mixer::playbackPosition() const
 samples_t Mixer::playbackPositionSamples() const
 {
     const msecs_t pos = playbackPosition();
-    return pos / 1000000. * m_outputSpec.sampleRate;
+    if (pos <= 0 || m_outputSpec.sampleRate == 0) {
+        return 0;
+    }
+
+    const long double samples = static_cast<long double>(pos) * m_outputSpec.sampleRate / 1000000.0L;
+    constexpr samples_t maximum = std::numeric_limits<samples_t>::max();
+    if (samples >= static_cast<long double>(maximum)) {
+        return maximum;
+    }
+
+    return static_cast<samples_t>(samples);
 }
 
 samples_t Mixer::process(float* outBuffer, samples_t samplesPerChannel)
 {
     ONLY_AUDIO_ENGINE_THREAD;
 
+    const msecs_t nextMicroseconds = m_clockTimeConverter.advance(samplesPerChannel, m_outputSpec.sampleRate);
     for (const IClockPtr& clock : m_clocks) {
-        clock->forward((samplesPerChannel * 1000000) / m_outputSpec.sampleRate);
+        clock->forward(nextMicroseconds);
     }
 
     size_t outBufferSize = samplesPerChannel * m_outputSpec.audioChannelCount;
@@ -380,6 +397,7 @@ void Mixer::addClock(IClockPtr clock)
 {
     ONLY_AUDIO_ENGINE_THREAD;
 
+    m_clockTimeConverter.reset();
     m_clocks.insert(std::move(clock));
 }
 
@@ -388,6 +406,13 @@ void Mixer::removeClock(IClockPtr clock)
     ONLY_AUDIO_ENGINE_THREAD;
 
     m_clocks.erase(clock);
+    m_clockTimeConverter.reset();
+}
+
+void Mixer::resetClockTimeConversion()
+{
+    ONLY_AUDIO_ENGINE_THREAD;
+    m_clockTimeConverter.reset();
 }
 
 AudioOutputParams Mixer::masterOutputParams() const

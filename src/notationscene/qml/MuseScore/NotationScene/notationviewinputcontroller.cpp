@@ -709,7 +709,7 @@ void NotationViewInputController::mousePressEvent(QMouseEvent* event)
     }
 
     if (playbackController()->isPlaying()) {
-        playbackController()->seekElement(hitElement);
+        playbackController()->seekElement(hitElement, playback::IPlaybackController::SeekOrigin::User);
         return;
     }
 
@@ -802,7 +802,7 @@ bool NotationViewInputController::mousePress_considerDragOutgoingElement(const C
     }
 
     viewInteraction()->select({ ctx.hitElement }, SelectType::SINGLE, ctx.hitStaff);
-    playbackController()->seekElement(ctx.hitElement);
+    playbackController()->seekElement(ctx.hitElement, playback::IPlaybackController::SeekOrigin::User);
     m_mouseDownInfo.dragAction = MouseDownInfo::DragOutgoingElement;
 
     return true;
@@ -896,7 +896,7 @@ void NotationViewInputController::mousePress_seekSelection(const ClickContext& c
     }
 
     if (!selection->isRange()) {
-        playbackController()->seekElement(elements.back());
+        playbackController()->seekElement(elements.back(), playback::IPlaybackController::SeekOrigin::User);
         return;
     }
 
@@ -918,7 +918,7 @@ void NotationViewInputController::mousePress_seekSelection(const ClickContext& c
         elementToSeek = element;
     }
 
-    playbackController()->seekElement(elementToSeek);
+    playbackController()->seekElement(elementToSeek, playback::IPlaybackController::SeekOrigin::User);
 }
 
 void NotationViewInputController::cycleOverlappingHitElements(const std::vector<EngravingItem*>& hitElements,

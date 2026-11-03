@@ -48,6 +48,10 @@ class CommonAudioApiConfigurationModel : public QObject, public muse::Contextabl
     Q_PROPERTY(unsigned int sampleRate READ sampleRate NOTIFY sampleRateChanged)
     Q_PROPERTY(QList<unsigned int> sampleRateList READ sampleRateList NOTIFY sampleRateListChanged)
 
+    Q_PROPERTY(bool isJackAudioApi READ isJackAudioApi NOTIFY isJackAudioApiChanged)
+    Q_PROPERTY(bool useJackTransport READ useJackTransport WRITE setUseJackTransport NOTIFY useJackTransportChanged)
+    Q_PROPERTY(QString jackTransportStatusText READ jackTransportStatusText NOTIFY jackTransportStatusChanged)
+
     muse::GlobalInject<muse::audio::IAudioConfiguration> audioConfiguration;
     muse::ContextInject<muse::audio::IAudioDriverController> audioDriverController = { this };
     muse::ContextInject<muse::IInteractive> interactive = { this };
@@ -69,6 +73,11 @@ public:
     QList<unsigned int> sampleRateList() const;
     Q_INVOKABLE void sampleRateSelected(const QString& sampleRateStr);
 
+    bool isJackAudioApi() const;
+    bool useJackTransport() const;
+    void setUseJackTransport(bool use);
+    QString jackTransportStatusText() const;
+
 signals:
     void currentDeviceIdChanged();
     void deviceListChanged();
@@ -78,5 +87,9 @@ signals:
 
     void bufferSizeChanged();
     void bufferSizeListChanged();
+
+    void isJackAudioApiChanged();
+    void useJackTransportChanged();
+    void jackTransportStatusChanged();
 };
 }

@@ -49,6 +49,10 @@ public:
     void setCurrentAudioApi(const std::string& name) override;
     async::Notification currentAudioApiChanged() const override;
 
+    bool useJackTransport() const override;
+    void setUseJackTransport(bool use) override;
+    async::Channel<bool> useJackTransportChanged() const override;
+
     std::string audioOutputDeviceId() const override;
     void setAudioOutputDeviceId(const std::string& deviceId) override;
     async::Notification audioOutputDeviceIdChanged() const override;
@@ -88,6 +92,7 @@ private:
     async::Channel<samples_t> m_samplesToPreallocateChanged;
     async::Channel<bool> m_autoProcessOnlineSoundsInBackgroundChanged;
     async::Channel<bool> m_useSoundFontLowPassFilterChanged;
+    async::Channel<bool> m_useJackTransportChanged;
 
     async::Notification m_currentAudioApiChanged;
     async::Notification m_audioOutputDeviceIdChanged;

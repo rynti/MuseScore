@@ -132,10 +132,13 @@ void EventAudioSource::seek(const msecs_t newPositionMsecs, const bool flushSoun
         return;
     }
 
-    if (m_synth->playbackPosition() == newPositionMsecs) {
+    if (m_synth->playbackPosition() == newPositionMsecs && !flushSound) {
         return;
     }
 
+    // A synchronized restart can deliberately seek to the current logical
+    // position. Reapply that position when flushing so the synthesizer resets
+    // its event cursor and fractional time state before the first JACK block.
     m_synth->setPlaybackPosition(newPositionMsecs);
 
     if (flushSound) {

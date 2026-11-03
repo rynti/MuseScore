@@ -77,6 +77,7 @@ else()
         internal/sequenceplayer.h
         internal/samplerateconvertor.cpp
         internal/samplerateconvertor.h
+        internal/sampletimeconverter.h
         internal/track.h
         internal/abstractaudiosource.cpp
         internal/abstractaudiosource.h

@@ -102,6 +102,7 @@ void AudioModule::resolveImports()
 void AudioModule::onInit(const IApplication::RunMode& mode)
 {
     m_configuration->init();
+    m_audioDriverController->init();
 
     if (mode == IApplication::RunMode::AudioPluginRegistration) {
         return;
@@ -114,6 +115,7 @@ void AudioModule::onInit(const IApplication::RunMode& mode)
 #ifndef Q_OS_WASM
     m_rpcTicker.start(1, [this]() {
         m_rpcChannel->process();
+        m_audioDriverController->poll();
     }, Ticker::Mode::Repeat);
 #endif
 

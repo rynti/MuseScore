@@ -33,6 +33,7 @@
 
 namespace muse::audio::engine {
 class IGetPlaybackPosition;
+class MixerTestAccess;
 class MixerChannel : public ITrackAudioOutput, public Contextable, public async::Asyncable
 {
     ContextInject<fx::IFxResolver> fxResolver = { this };
@@ -71,6 +72,7 @@ public:
     samples_t process(float* buffer, samples_t samplesPerChannel) override;
 
 private:
+    friend class MixerTestAccess;
     void completeOutput(float* buffer, unsigned int samplesCount);
 
     void updateShouldProcessDuringSilence();

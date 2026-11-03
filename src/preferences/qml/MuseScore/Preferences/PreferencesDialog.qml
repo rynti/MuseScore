@@ -99,8 +99,38 @@ StyledDialogView {
                 root.hide()
             })
 
+            if (pageInfo.id === "audio-midi") {
+                connectAudioMidiPage(obj)
+            }
+
             root.prv.pagesObjects[pageInfo.id] = obj
         }
+    }
+
+    function connectAudioMidiPage(pageObject) {
+        pageObject.applyAndRestartRequested.connect(function() {
+            if (!applyAllPreferences()) {
+                return
+            }
+
+            root.hide()
+            pageObject.restartApplication()
+        })
+    }
+
+    function applyAllPreferences() {
+        preferencesModel.apply()
+
+        var ok = true
+        var pages = preferencesModel.availablePages()
+
+        for (var i in pages) {
+            var page = pages[i]
+            var obj = root.prv.pagesObjects[page.id]
+            ok &= obj.apply()
+        }
+
+        return Boolean(ok)
     }
 
     PreferencesModel {
@@ -174,18 +204,7 @@ StyledDialogView {
             }
 
             onApplyRequested: {
-                preferencesModel.apply()
-
-                var ok = true
-                var pages = preferencesModel.availablePages()
-
-                for (var i in pages) {
-                    var page = pages[i]
-                    var obj = root.prv.pagesObjects[page.id]
-                    ok &= obj.apply()
-                }
-
-                if (ok) {
+                if (root.applyAllPreferences()) {
                     root.hide()
                 }
             }

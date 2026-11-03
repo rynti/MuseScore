@@ -25,9 +25,17 @@
 #include "translation.h"
 #include "log.h"
 
+#if defined(MUSE_MODULE_AUDIO_JACK) && defined(Q_OS_LINUX)
+#include "audio/common/workmode.h"
+#endif
+
 using namespace mu::preferences;
 using namespace muse::audio;
 using namespace muse::midi;
+
+#if defined(MUSE_MODULE_AUDIO_JACK) && defined(Q_OS_LINUX)
+static constexpr const char* JACK_AUDIO_API = "JACK";
+#endif
 
 AudioMidiPreferencesModel::AudioMidiPreferencesModel(QObject* parent)
     : QObject(parent), muse::Contextable(muse::iocCtxForQmlObject(this))
@@ -40,9 +48,66 @@ int AudioMidiPreferencesModel::currentAudioApiIndex() const
     return audioApiList().indexOf(currentApi);
 }
 
+bool AudioMidiPreferencesModel::audioApiSelectionEnabled() const
+{
+#if defined(MUSE_MODULE_AUDIO_JACK) && defined(Q_OS_LINUX)
+    const mu::context::IPlaybackStatePtr playbackState = globalContext()->playbackState();
+    return playbackState && playbackState->playbackStatus() == PlaybackStatus::Stopped;
+#else
+    return true;
+#endif
+}
+
+bool AudioMidiPreferencesModel::jackWorkerRpcWarningVisible() const
+{
+#if defined(MUSE_MODULE_AUDIO_JACK) && defined(Q_OS_LINUX)
+    return audioDriverController()->currentAudioApi() == JACK_AUDIO_API
+           && workmode::mode() != workmode::WorkerRpcMode;
+#else
+    return false;
+#endif
+}
+
+QString AudioMidiPreferencesModel::jackWorkModeName() const
+{
+#if defined(MUSE_MODULE_AUDIO_JACK) && defined(Q_OS_LINUX)
+    switch (workmode::mode()) {
+    case workmode::WorkerMode:
+        return QStringLiteral("Worker mode");
+    case workmode::DriverMode:
+        return QStringLiteral("Driver mode");
+    case workmode::WorkerRpcMode:
+        return QStringLiteral("Worker RPC mode");
+    case workmode::Undefined:
+        break;
+    }
+#endif
+
+    return QStringLiteral("Unknown audio work mode");
+}
+
+void AudioMidiPreferencesModel::useWorkerRpcAndRestart()
+{
+#if defined(MUSE_MODULE_AUDIO_JACK) && defined(Q_OS_LINUX)
+    if (!jackWorkerRpcWarningVisible()) {
+        return;
+    }
+
+    workmode::setMode(workmode::WorkerRpcMode);
+    emit applyAndRestartRequested();
+#endif
+}
+
+void AudioMidiPreferencesModel::restartApplication()
+{
+    dispatcher()->dispatch("restart");
+}
+
 void AudioMidiPreferencesModel::setCurrentAudioApiIndex(int index)
 {
-    if (index == currentAudioApiIndex()) {
+    if (!audioApiSelectionEnabled()) {
+        interactive()->warning("", muse::trc("preferences", "Stop playback before changing the audio driver."));
+        emit currentAudioApiIndexChanged(currentAudioApiIndex());
         return;
     }
 
@@ -51,31 +116,122 @@ void AudioMidiPreferencesModel::setCurrentAudioApiIndex(int index)
         return;
     }
 
-    std::string fallbackApi = audioDriverController()->currentAudioApi();
+    const std::string requestedApi = apiList.at(index);
+    if (requestedApi == audioDriverController()->currentAudioApi()) {
+        return;
+    }
 
-    audioDriverController()->availableOutputDevicesChanged().onNotify(this, [this, fallbackApi]() {
-        audioDriverController()->availableOutputDevicesChanged().disconnect(this);
+#if defined(MUSE_MODULE_AUDIO_JACK) && defined(Q_OS_LINUX)
+    if (requestedApi == JACK_AUDIO_API && workmode::mode() != workmode::WorkerRpcMode) {
+        emit currentAudioApiIndexChanged(currentAudioApiIndex());
+        showJackWorkModeWarning(requestedApi);
+        return;
+    }
+#endif
 
-        if (!audioDriverController()->availableOutputDevices().empty()) {
+    switchAudioApi(requestedApi);
+}
+
+bool AudioMidiPreferencesModel::switchAudioApi(const std::string& requestedApi)
+{
+    m_reconcilingAudioApi = true;
+    const bool switched = audioDriverController()->changeCurrentAudioApi(requestedApi);
+    const std::string actualApi = audioDriverController()->currentAudioApi();
+    audioConfiguration()->setCurrentAudioApi(actualApi);
+    m_reconcilingAudioApi = false;
+
+    emit currentAudioApiIndexChanged(currentAudioApiIndex());
+
+    if (!switched) {
+        showAudioApiSwitchError(requestedApi);
+    }
+
+    return switched;
+}
+
+#if defined(MUSE_MODULE_AUDIO_JACK) && defined(Q_OS_LINUX)
+void AudioMidiPreferencesModel::showJackWorkModeWarning(const std::string& requestedApi)
+{
+    const std::string title = muse::trc("preferences", "Worker RPC mode is recommended for JACK");
+    const std::string text = muse::qtrc(
+        "preferences",
+        "MuseScore Studio is currently using %1. JACK will still work, but latency-correct recording is not guaranteed. "
+        "Switch to Worker RPC mode for accurate recording.").arg(jackWorkModeName()).toStdString();
+
+    const muse::IInteractive::ButtonData cancelButton = interactive()->buttonData(muse::IInteractive::Button::Cancel);
+    const muse::IInteractive::ButtonData useAnywayButton(
+        muse::IInteractive::Button::Ignore,
+        muse::trc("preferences", "Use JACK anyway"),
+        false,
+        false,
+        muse::IInteractive::ButtonRole::ContinueRole);
+    const muse::IInteractive::ButtonData switchButton(
+        muse::IInteractive::Button::Apply,
+        muse::trc("preferences", "Switch to Worker RPC and restart"),
+        true,
+        false,
+        muse::IInteractive::ButtonRole::ApplyRole);
+
+    interactive()->warning(title, text, { cancelButton, useAnywayButton, switchButton }, switchButton.btn)
+    .onResolve(this, [this, requestedApi](const muse::IInteractive::Result& result) {
+        if (result.isButton(muse::IInteractive::Button::Ignore)) {
+            switchAudioApi(requestedApi);
             return;
         }
 
-        auto promise = interactive()->warning(
-            muse::trc("preferences", "No audio devices available"),
-            muse::qtrc("preferences", "The selected audio driver does not have any available audio devices. "
-                                      "MuseScore Studio will use the default audio driver instead. "
-                                      "To use %1, ensure your hardware is set up correctly, "
-                                      "then restart MuseScore Studio and try again.")
-            .arg(QString::fromStdString(audioDriverController()->currentAudioApi())).toStdString());
+        if (result.isButton(muse::IInteractive::Button::Apply) && switchAudioApi(requestedApi)) {
+            workmode::setMode(workmode::WorkerRpcMode);
+            emit applyAndRestartRequested();
+            return;
+        }
 
-        promise.onResolve(this, [this, fallbackApi](const muse::IInteractive::Result&) {
-            audioDriverController()->changeCurrentAudioApi(fallbackApi);
-            emit currentAudioApiIndexChanged(currentAudioApiIndex());
-        });
-    }, Asyncable::Mode::SetReplace);
+        emit currentAudioApiIndexChanged(currentAudioApiIndex());
+    });
+}
+#endif
 
-    audioDriverController()->changeCurrentAudioApi(apiList.at(index));
-    emit currentAudioApiIndexChanged(index);
+void AudioMidiPreferencesModel::showAudioApiSwitchError(const std::string& requestedApi) const
+{
+    interactive()->error(
+        "",
+        muse::qtrc("preferences", "The %1 audio driver could not be opened. MuseScore Studio restored %2.")
+        .arg(QString::fromStdString(requestedApi), QString::fromStdString(audioDriverController()->currentAudioApi())).toStdString());
+}
+
+void AudioMidiPreferencesModel::reconcilePreferredAudioApi()
+{
+#if defined(MUSE_MODULE_AUDIO_JACK) && defined(Q_OS_LINUX)
+    if (m_reconcilingAudioApi) {
+        return;
+    }
+
+    const std::string preferredApi = audioConfiguration()->currentAudioApi();
+    if (preferredApi == audioDriverController()->currentAudioApi()) {
+        return;
+    }
+
+    if (!audioApiSelectionEnabled()) {
+        emit currentAudioApiIndexChanged(currentAudioApiIndex());
+        interactive()->warning(
+            "",
+            muse::trc("preferences", "The audio driver cannot be changed during playback. The saved driver will be used after restart."));
+        return;
+    }
+
+    m_reconcilingAudioApi = true;
+    const bool switched = audioDriverController()->changeCurrentAudioApi(preferredApi);
+    const std::string actualApi = audioDriverController()->currentAudioApi();
+    if (audioConfiguration()->currentAudioApi() != actualApi) {
+        audioConfiguration()->setCurrentAudioApi(actualApi);
+    }
+    m_reconcilingAudioApi = false;
+
+    emit currentAudioApiIndexChanged(currentAudioApiIndex());
+
+    if (!switched) {
+        showAudioApiSwitchError(preferredApi);
+    }
+#endif
 }
 
 QString AudioMidiPreferencesModel::midiInputDeviceId() const
@@ -100,6 +256,19 @@ void AudioMidiPreferencesModel::outputDeviceSelected(const QString& deviceId)
 
 void AudioMidiPreferencesModel::init()
 {
+#if defined(MUSE_MODULE_AUDIO_JACK) && defined(Q_OS_LINUX)
+    const mu::context::IPlaybackStatePtr playbackState = globalContext()->playbackState();
+    if (playbackState) {
+        playbackState->playbackStatusChanged().onReceive(this, [this](PlaybackStatus) {
+            emit audioApiSelectionEnabledChanged();
+        });
+    }
+
+    audioConfiguration()->currentAudioApiChanged().onNotify(this, [this]() {
+        reconcilePreferredAudioApi();
+    });
+#endif
+
     midiInPort()->availableDevicesChanged().onNotify(this, [this]() {
         emit midiInputDevicesChanged();
     });
@@ -134,6 +303,7 @@ void AudioMidiPreferencesModel::init()
 
     audioDriverController()->currentAudioApiChanged().onNotify(this, [this]() {
         emit currentAudioApiIndexChanged(currentAudioApiIndex());
+        emit jackWorkerRpcWarningVisibleChanged();
     });
 
     audioConfiguration()->autoProcessOnlineSoundsInBackgroundChanged().onReceive(this, [this](bool) {

@@ -1167,7 +1167,7 @@ void NotationActionController::move(MoveDirection direction, bool quickly)
                 }
             }
 
-            playbackController()->seekBeat(targetMeasureIdx, targetBeatIdx);
+            playbackController()->seekBeat(targetMeasureIdx, targetBeatIdx, playback::IPlaybackController::SeekOrigin::User);
             return;
         }
 
@@ -2209,7 +2209,7 @@ void NotationActionController::seekSelectedElement()
         return;
     }
 
-    playbackController()->seekElement(element);
+    playbackController()->seekElement(element, playback::IPlaybackController::SeekOrigin::User);
 }
 
 void NotationActionController::playSelectedElement(bool playChord)

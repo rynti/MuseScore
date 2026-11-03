@@ -43,6 +43,8 @@ void CommonAudioApiConfigurationModel::load()
         emit sampleRateChanged();
         emit bufferSizeListChanged();
         emit bufferSizeChanged();
+        emit isJackAudioApiChanged();
+        emit jackTransportStatusChanged();
     });
 
     audioDriverController()->availableOutputDevicesChanged().onNotify(this, [this]() {
@@ -64,6 +66,15 @@ void CommonAudioApiConfigurationModel::load()
 
     audioDriverController()->outputDeviceBufferSizeChanged().onNotify(this, [this]() {
         emit bufferSizeChanged();
+    });
+
+    audioConfiguration()->useJackTransportChanged().onReceive(this, [this](bool) {
+        emit useJackTransportChanged();
+        emit jackTransportStatusChanged();
+    });
+
+    audioDriverController()->transportSyncStateChanged().onNotify(this, [this]() {
+        emit jackTransportStatusChanged();
     });
 }
 
@@ -122,6 +133,10 @@ QList<unsigned int> CommonAudioApiConfigurationModel::bufferSizeList() const
 
 void CommonAudioApiConfigurationModel::bufferSizeSelected(const QString& bufferSizeStr)
 {
+    if (isJackAudioApi()) {
+        return;
+    }
+
     audioDriverController()->changeBufferSize(bufferSizeStr.toInt());
 }
 
@@ -146,5 +161,44 @@ QList<unsigned int> CommonAudioApiConfigurationModel::sampleRateList() const
 
 void CommonAudioApiConfigurationModel::sampleRateSelected(const QString& sampleRateStr)
 {
+    if (isJackAudioApi()) {
+        return;
+    }
+
     audioDriverController()->changeSampleRate(sampleRateStr.toInt());
+}
+
+bool CommonAudioApiConfigurationModel::isJackAudioApi() const
+{
+    return audioDriverController()->currentAudioApi() == "JACK";
+}
+
+bool CommonAudioApiConfigurationModel::useJackTransport() const
+{
+    return audioDriverController()->transportSyncRequested();
+}
+
+void CommonAudioApiConfigurationModel::setUseJackTransport(bool use)
+{
+    if (!isJackAudioApi() || use == useJackTransport()) {
+        return;
+    }
+
+    audioDriverController()->setTransportSyncEnabled(use);
+}
+
+QString CommonAudioApiConfigurationModel::jackTransportStatusText() const
+{
+    switch (audioDriverController()->transportSyncState()) {
+    case AudioDriverTransportSyncState::Off:
+        return muse::qtrc("preferences", "JACK transport synchronization is off.");
+    case AudioDriverTransportSyncState::Pending:
+        return muse::qtrc("preferences", "Waiting for JACK transport to stop before synchronization becomes active.");
+    case AudioDriverTransportSyncState::Effective:
+        return muse::qtrc("preferences", "JACK transport synchronization is active.");
+    case AudioDriverTransportSyncState::Unavailable:
+        return muse::qtrc("preferences", "The JACK server is unavailable. Select an audio driver again or restart MuseScore Studio.");
+    }
+
+    return {};
 }

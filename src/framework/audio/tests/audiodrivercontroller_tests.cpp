@@ -98,6 +98,9 @@ protected:
         ON_CALL(*m_configuration, currentAudioApi())
         .WillByDefault(Return(CURRENT_DRIVER_NAME));
 
+        ON_CALL(*m_configuration, desiredOutputSpec())
+        .WillByDefault(Return(DESIRED_OUTPUT_SPEC));
+
         ON_CALL(*m_driverFactory, createDriver(_))
         .WillByDefault(Invoke([this](const std::string& name) -> IAudioDriverPtr {
             auto it = m_drivers.find(name);
@@ -118,6 +121,9 @@ protected:
 
         //! NOTE: emulates a real driver that tracks its state
         Driver* d = driver.get();
+
+        ON_CALL(*d->mock, name())
+        .WillByDefault(Return(name));
 
         ON_CALL(*d->mock, defaultDevice())
         .WillByDefault(Return(AudioDeviceID(DEFAULT_DEVICE_ID)));
@@ -258,8 +264,7 @@ TEST_F(Audio_AudioDriverControllerTests, Open_FallsBackToDefaultDevice_WhenReque
 
     //! [THEN] The current driver is kept
     EXPECT_CALL(*m_driverFactory, createDriver(CURRENT_DRIVER_NAME));
-    EXPECT_CALL(*m_configuration, setCurrentAudioApi(_))
-    .Times(0);
+    EXPECT_CALL(*m_configuration, setCurrentAudioApi(CURRENT_DRIVER_NAME));
 
     //! [WHEN] Opening the headphones
     IAudioDriver::Spec activeSpec;
@@ -373,10 +378,10 @@ TEST_F(Audio_AudioDriverControllerTests, ChangeCurrentAudioApi_OpensDefaultDevic
     //! [THEN] The new driver is created and opened with the default device
     EXPECT_CALL(*m_driverFactory, createDriver(NEW_DRIVER_NAME));
     EXPECT_CALL(*newDriver->mock, init());
-    EXPECT_CALL(*newDriver->mock, open(SpecIs(DEFAULT_DEVICE_ID, DEFAULT_OUTPUT_SPEC), _));
+    EXPECT_CALL(*newDriver->mock, open(SpecIs(DEFAULT_DEVICE_ID, DESIRED_OUTPUT_SPEC), _));
 
-    //! [THEN] The new driver is saved
-    EXPECT_CALL(*m_configuration, setCurrentAudioApi(NEW_DRIVER_NAME));
+    //! [THEN] Preferences owns persistence after a successful live switch
+    EXPECT_CALL(*m_configuration, setCurrentAudioApi(_)).Times(0);
 
     int currentAudioApiChangedCount = 0;
     countNotifications(m_controller->currentAudioApiChanged(), currentAudioApiChangedCount);
@@ -395,7 +400,7 @@ TEST_F(Audio_AudioDriverControllerTests, ChangeCurrentAudioApi_OpensDefaultDevic
     EXPECT_EQ(availableOutputDevicesChangedCount, 1);
 }
 
-TEST_F(Audio_AudioDriverControllerTests, ChangeCurrentAudioApi_DoesNotOpen_WhenNewDriverHasNoDevices)
+TEST_F(Audio_AudioDriverControllerTests, ChangeCurrentAudioApi_RestoresPrevious_WhenNewDriverCannotOpen)
 {
     //! [GIVEN] The headphones are opened
     givenOpened(HEADPHONES);
@@ -405,24 +410,80 @@ TEST_F(Audio_AudioDriverControllerTests, ChangeCurrentAudioApi_DoesNotOpen_WhenN
     DriverPtr newDriver = makeDriver(NEW_DRIVER_NAME);
     ON_CALL(*newDriver->mock, defaultDevice())
     .WillByDefault(Return(AudioDeviceID()));
+    ON_CALL(*newDriver->mock, open(_, _))
+    .WillByDefault(Return(false));
 
-    //! [THEN] The new driver isn't opened
+    //! [THEN] The failed driver is tried once and the working driver is restored
     EXPECT_CALL(*newDriver->mock, open(_, _))
-    .Times(0);
+    .Times(1);
 
-    //! [THEN] The new driver is still saved
-    EXPECT_CALL(*m_configuration, setCurrentAudioApi(NEW_DRIVER_NAME));
+    EXPECT_CALL(*m_configuration, setCurrentAudioApi(CURRENT_DRIVER_NAME));
 
     int currentAudioApiChangedCount = 0;
     countNotifications(m_controller->currentAudioApiChanged(), currentAudioApiChangedCount);
 
     //! [WHEN] Switching to the new driver
-    m_controller->changeCurrentAudioApi(NEW_DRIVER_NAME);
+    EXPECT_FALSE(m_controller->changeCurrentAudioApi(NEW_DRIVER_NAME));
     async::processMessages();
 
-    //! [THEN] Nothing is opened
-    EXPECT_FALSE(m_controller->isOpened());
-    EXPECT_EQ(currentAudioApiChangedCount, 1);
+    //! [THEN] The previous API and device remain active
+    EXPECT_TRUE(m_controller->isOpened());
+    EXPECT_EQ(m_controller->currentAudioApi(), CURRENT_DRIVER_NAME);
+    EXPECT_EQ(m_controller->outputDevice(), HEADPHONES);
+    EXPECT_EQ(currentAudioApiChangedCount, 0);
+}
+
+TEST_F(Audio_AudioDriverControllerTests, FailedApiSwitch_RestoresLastValidSpec)
+{
+    givenOpened(HEADPHONES);
+    givenClosedWithBlankSpec(*m_currentDriver);
+
+    DriverPtr newDriver = makeDriver("JACK");
+    ON_CALL(*newDriver->mock, open(_, _)).WillByDefault(Return(false));
+    EXPECT_CALL(*m_currentDriver->mock, open(SpecIs(HEADPHONES, DESIRED_OUTPUT_SPEC), _));
+
+    EXPECT_FALSE(m_controller->changeCurrentAudioApi("JACK"));
+    async::processMessages();
+
+    EXPECT_TRUE(m_controller->isOpened());
+    EXPECT_EQ(m_controller->currentAudioApi(), CURRENT_DRIVER_NAME);
+    EXPECT_EQ(m_controller->outputDevice(), HEADPHONES);
+}
+
+TEST_F(Audio_AudioDriverControllerTests, ApiSwitch_UsesNewDriversLastValidSpec)
+{
+    givenOpened(HEADPHONES);
+    DriverPtr newDriver = makeDriver("DirectSound");
+    ASSERT_TRUE(m_controller->changeCurrentAudioApi("DirectSound"));
+    async::processMessages();
+
+    givenClosedWithBlankSpec(*newDriver);
+    EXPECT_CALL(*newDriver->mock, open(SpecIs(SPEAKERS, DESIRED_OUTPUT_SPEC), _))
+    .WillOnce(Return(false));
+    EXPECT_CALL(*newDriver->mock, open(SpecIs(DEFAULT_DEVICE_ID, DESIRED_OUTPUT_SPEC), _));
+
+    EXPECT_FALSE(m_controller->selectOutputDevice(SPEAKERS));
+    async::processMessages();
+    EXPECT_TRUE(m_controller->isOpened());
+    EXPECT_EQ(m_controller->outputDevice(), DEFAULT_DEVICE_ID);
+}
+
+TEST_F(Audio_AudioDriverControllerTests, JackSettings_DoNotReopenOrRewriteServerTiming)
+{
+    DriverPtr jack = makeDriver("JACK");
+    ON_CALL(*m_configuration, currentAudioApi()).WillByDefault(Return("JACK"));
+    givenOpened(DEFAULT_DEVICE_ID);
+
+    EXPECT_CALL(*jack->mock, close()).Times(0);
+    EXPECT_CALL(*jack->mock, open(_, _)).Times(0);
+    EXPECT_CALL(*m_configuration, setDriverBufferSize(_)).Times(0);
+    EXPECT_CALL(*m_configuration, setSampleRate(_)).Times(0);
+
+    EXPECT_TRUE(m_controller->selectOutputDevice(DEFAULT_DEVICE_ID));
+    EXPECT_FALSE(m_controller->selectOutputDevice("unsupported-device"));
+    m_controller->changeBufferSize(4096);
+    m_controller->changeSampleRate(96000);
+    EXPECT_THAT(m_controller->activeSpec(), SpecIs(DEFAULT_DEVICE_ID, DESIRED_OUTPUT_SPEC));
 }
 
 TEST_F(Audio_AudioDriverControllerTests, SelectOutputDevice_ReopensDriverWithNewDevice)

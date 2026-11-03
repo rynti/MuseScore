@@ -44,6 +44,10 @@ public:
     virtual void setCurrentAudioApi(const std::string& name) = 0;
     virtual async::Notification currentAudioApiChanged() const = 0;
 
+    virtual bool useJackTransport() const = 0;
+    virtual void setUseJackTransport(bool use) = 0;
+    virtual async::Channel<bool> useJackTransportChanged() const = 0;
+
     virtual std::string audioOutputDeviceId() const = 0;
     virtual void setAudioOutputDeviceId(const std::string& deviceId) = 0;
     virtual async::Notification audioOutputDeviceIdChanged() const = 0;

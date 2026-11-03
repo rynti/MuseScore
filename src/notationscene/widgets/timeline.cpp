@@ -2328,7 +2328,7 @@ void Timeline::seekSelection()
         elementToSeek = element;
     }
 
-    playbackController()->seekElement(elementToSeek);
+    playbackController()->seekElement(elementToSeek, playback::IPlaybackController::SeekOrigin::User);
 }
 
 //---------------------------------------------------------
