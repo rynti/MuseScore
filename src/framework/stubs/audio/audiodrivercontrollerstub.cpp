@@ -36,8 +36,9 @@ std::string AudioDriverControllerStub::currentAudioApi() const
     return {};
 }
 
-void AudioDriverControllerStub::changeCurrentAudioApi(const std::string&)
+bool AudioDriverControllerStub::changeCurrentAudioApi(const std::string&)
 {
+    return false;
 }
 
 async::Notification AudioDriverControllerStub::currentAudioApiChanged() const

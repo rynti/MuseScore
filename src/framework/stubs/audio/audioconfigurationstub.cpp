@@ -48,6 +48,20 @@ async::Notification AudioConfigurationStub::currentAudioApiChanged() const
     return {};
 }
 
+bool AudioConfigurationStub::useJackTransport() const
+{
+    return false;
+}
+
+void AudioConfigurationStub::setUseJackTransport(bool)
+{
+}
+
+async::Channel<bool> AudioConfigurationStub::useJackTransportChanged() const
+{
+    return {};
+}
+
 std::string AudioConfigurationStub::audioOutputDeviceId() const
 {
     return "";

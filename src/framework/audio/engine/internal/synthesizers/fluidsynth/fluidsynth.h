@@ -33,6 +33,7 @@
 #include "midi/imidioutport.h"
 
 #include "../abstractsynthesizer.h"
+#include "../../sampletimeconverter.h"
 #include "fluidsequencer.h"
 
 namespace muse::audio::synth {
@@ -119,6 +120,7 @@ private:
     async::Channel<unsigned int> m_streamsCountChanged;
 
     FluidSequencer m_sequencer;
+    engine::SamplesToMicrosecondsConverter m_sequencerTimeConverter;
     std::set<io::path_t> m_sfontPaths;
     std::optional<midi::Program> m_preset;
 

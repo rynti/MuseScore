@@ -41,6 +41,7 @@ SequencePlayer::SequencePlayer(IGetTracks* getTracks, IClockPtr clock, const mod
             return;
         }
 
+        audioEngine()->mixer()->resetClockTimeConversion();
         if (m_tracksFollowClockSeek) {
             seekAllTracks(m_clock->currentTime(), true /*flushSound*/);
         }
@@ -106,6 +107,7 @@ void SequencePlayer::seek(const secs_t newPosition, const bool flushSound)
     ONLY_AUDIO_ENGINE_THREAD;
 
     msecs_t newPos = secsToMicrosecs(newPosition);
+    audioEngine()->mixer()->resetClockTimeConversion();
     m_tracksFollowClockSeek = false;
     m_clock->seek(newPos);
     m_tracksFollowClockSeek = true;
@@ -246,6 +248,15 @@ void SequencePlayer::prepareAllTracksToPlay(AllTracksReadyCallback allTracksRead
         return;
     }
 
+    auto reanchorAndNotify = [this, allTracksReadyCallback]() {
+        // Preparation can complete asynchronously, and another locate can
+        // update the clock in the meantime. Anchor every current source to the
+        // latest logical position immediately before reporting ready.
+        audioEngine()->mixer()->resetClockTimeConversion();
+        seekAllTracks(m_clock->currentTime(), true);
+        allTracksReadyCallback();
+    };
+
     std::vector<TrackPtr> notYetReadyToPlayTracks;
     m_notYetReadyToPlayTrackIdSet.clear();
 
@@ -263,18 +274,18 @@ void SequencePlayer::prepareAllTracksToPlay(AllTracksReadyCallback allTracksRead
     }
 
     if (notYetReadyToPlayTracks.empty()) {
-        allTracksReadyCallback();
+        reanchorAndNotify();
         return;
     }
 
     for (const TrackPtr& track : notYetReadyToPlayTracks) {
         const TrackId trackId = track->id;
 
-        track->inputHandler->readyToPlayChanged().onNotify(this, [this, trackId, allTracksReadyCallback]() {
+        track->inputHandler->readyToPlayChanged().onNotify(this, [this, trackId, reanchorAndNotify]() {
             muse::remove(m_notYetReadyToPlayTrackIdSet, trackId);
 
             if (m_notYetReadyToPlayTrackIdSet.empty()) {
-                allTracksReadyCallback();
+                reanchorAndNotify();
             }
 
             const TrackPtr ptr = m_getTracks->track(trackId);

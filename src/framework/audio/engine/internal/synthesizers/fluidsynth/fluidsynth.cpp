@@ -271,6 +271,7 @@ void FluidSynth::setOutputSpec(const OutputSpec& spec)
         return;
     }
 
+    m_sequencerTimeConverter.reset();
     m_outputSpec = spec;
 
     if (m_fluid->settings) {
@@ -361,6 +362,7 @@ void FluidSynth::setupSound(const PlaybackSetupData& setupData)
 
 void FluidSynth::setupEvents(const mpe::PlaybackData& playbackData)
 {
+    m_sequencerTimeConverter.reset();
     m_sequencer.load(playbackData);
 }
 
@@ -393,6 +395,7 @@ msecs_t FluidSynth::playbackPosition() const
 
 void FluidSynth::setPlaybackPosition(const msecs_t newPosition)
 {
+    m_sequencerTimeConverter.reset();
     m_sequencer.setPlaybackPosition(newPosition);
 
     if (isActive()) {
@@ -416,7 +419,7 @@ samples_t FluidSynth::process(float* buffer, samples_t samplesPerChannel)
         m_flushSoundRequested = false;
     }
 
-    const msecs_t nextMsecs = samplesToMsecs(samplesPerChannel, m_outputSpec.sampleRate);
+    const msecs_t nextMsecs = m_sequencerTimeConverter.advance(samplesPerChannel, m_outputSpec.sampleRate);
     const FluidSequencer::EventSequenceMap sequences = m_sequencer.movePlaybackForward(nextMsecs);
     samples_t sampleOffset = 0;
 

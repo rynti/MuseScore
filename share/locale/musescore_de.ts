@@ -7629,7 +7629,7 @@ niemals linksbündig ausrichten</translation>
     <message>
         <location filename="../../src/notationscene/internal/notationuiactions.cpp" line="1410"/>
         <source>Tempo &amp;marking</source>
-        <translation>Tempo&amp;markierung</translation>
+        <translation>Te&amp;mpoangabe</translation>
     </message>
     <message>
         <location filename="../../src/notationscene/internal/notationuiactions.cpp" line="1411"/>
@@ -16647,7 +16647,7 @@ Bund %1 auf Saiten %2</translation>
     <message>
         <location filename="../../src/engraving/dom/property.cpp" line="154"/>
         <source>aspect ratio locked</source>
-        <translation>festes Höhe/Breite-Verhältnis</translation>
+        <translation>verriegeltes Höhe/Breite-Verhältnis</translation>
     </message>
     <message>
         <location filename="../../src/engraving/dom/property.cpp" line="155"/>
@@ -24439,7 +24439,7 @@ Leerraum</translation>
         <location filename="../../src/inspector/qml/MuseScore/Inspector/notation/images/ImageSettings.qml" line="82"/>
         <location filename="../../src/inspector/qml/MuseScore/Inspector/notation/notes/beams/BeamSettings.qml" line="308"/>
         <source>Lock</source>
-        <translation>Sperren</translation>
+        <translation>Verriegeln</translation>
     </message>
     <message>
         <location filename="../../src/inspector/qml/MuseScore/Inspector/notation/images/ImageSettings.qml" line="96"/>
@@ -26606,7 +26606,7 @@ Leerraum</translation>
     <message>
         <location filename="../../src/instrumentsscene/qml/MuseScore/InstrumentsScene/internal/LayoutPanelAddButton.qml" line="50"/>
         <source>System markings (tempo, rehearsal marks, etc.)</source>
-        <translation>Systemmarkierungen (Tempo, Übungsmarken, etc.)</translation>
+        <translation>Systemmarkierungen (Tempoangaben, Übungsmarken, etc.)</translation>
     </message>
     <message>
         <location filename="../../src/instrumentsscene/qml/MuseScore/InstrumentsScene/internal/LayoutPanelItemDelegate.qml" line="247"/>

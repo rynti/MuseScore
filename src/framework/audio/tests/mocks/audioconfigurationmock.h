@@ -67,5 +67,9 @@ public:
     MOCK_METHOD(async::Channel<bool>, useSoundFontLowPassFilterChanged, (), (const, override));
 
     MOCK_METHOD(bool, shouldMeasureInputLag, (), (const, override));
+
+    MOCK_METHOD(bool, useJackTransport, (), (const, override));
+    MOCK_METHOD(void, setUseJackTransport, (bool), (override));
+    MOCK_METHOD(async::Channel<bool>, useJackTransportChanged, (), (const, override));
 };
 }

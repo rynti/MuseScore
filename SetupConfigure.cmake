@@ -310,17 +310,17 @@ set(MUSE_APP_BUILD_NUMBER ${CMAKE_BUILD_NUMBER})
 set(MUSE_APP_INSTALL_PREFIX ${CMAKE_INSTALL_PREFIX})
 set(MUSE_APP_INSTALL_NAME ${Mscore_INSTALL_NAME})
 
+# JACK is a Linux-only optional backend. Normalize this before framework
+# configuration generates muse_framework_config.h.
+if (NOT OS_IS_LIN)
+    set(MUSE_MODULE_AUDIO_JACK OFF)
+endif()
+
 include(${MUSE_FRAMEWORK_SRC_PATH}/cmake/MuseSetupConfiguration.cmake)
 
 ###########################################
 # Subsystem
 ###########################################
-
-if (MUSE_MODULE_AUDIO_JACK)
-    if (NOT (OS_IS_LIN OR CC_IS_MINGW))
-        set(MUSE_MODULE_AUDIO_JACK OFF)
-    endif()
-endif()
 
 if (MUSE_COMPILE_ASAN)
     set(MUSE_ENABLE_CUSTOM_ALLOCATOR OFF)

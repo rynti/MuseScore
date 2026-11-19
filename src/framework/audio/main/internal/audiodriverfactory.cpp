@@ -24,7 +24,7 @@
 
 #include "muse_framework_config.h"
 
-#ifdef MUSE_MODULE_AUDIO_JACK
+#if defined(MUSE_MODULE_AUDIO_JACK) && defined(Q_OS_LINUX)
 #include "audio/driver/platform/jack/jackaudiodriver.h"
 #endif
 
@@ -56,54 +56,8 @@
 using namespace muse;
 using namespace muse::audio;
 
-std::vector<std::string> AudioDriverFactory::availableAudioDrivers() const
-{
-    std::vector<std::string> names;
-#ifdef MUSE_MODULE_AUDIO_JACK
-    names.push_back("JACK");
-    return names;
-#endif
-
-#ifdef Q_OS_WIN
-    names.push_back("WASAPI");
-#ifdef MUSE_MODULE_AUDIO_ASIO
-    names.push_back("ASIO");
-#endif
-
-    return names;
-#endif // Q_OS_WIN
-
-#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
-    names.push_back("ALSA");
-    if (qEnvironmentVariableIsSet("MUSESCORE_FORCE_ALSA")) {
-        return names;
-    }
-
-#ifdef MUSE_MODULE_AUDIO_PIPEWIRE
-    names.push_back("PipeWire");
-#endif
-
-    return names;
-#endif // Q_OS_LINUX
-
-#ifdef Q_OS_MACOS
-    names.push_back("CoreAudio");
-    return names;
-#endif
-
-#ifdef Q_OS_WASM
-    names.push_back("WASM");
-    return names;
-#endif
-}
-
 IAudioDriverPtr AudioDriverFactory::createDriver(const std::string& name) const
 {
-#ifdef MUSE_MODULE_AUDIO_JACK
-    LOGW() << "required: " << name << ", but is set MUSE_MODULE_AUDIO_JACK";
-    return std::shared_ptr<IAudioDriver>(new JackAudioDriver());
-#endif
-
 #ifdef Q_OS_WIN
     if (name == "ASIO") {
 #ifdef MUSE_MODULE_AUDIO_ASIO
@@ -125,21 +79,33 @@ IAudioDriverPtr AudioDriverFactory::createDriver(const std::string& name) const
         return std::make_shared<AlsaAudioDriver>();
     }
 
+    if (name == "ALSA") {
+        return std::make_shared<AlsaAudioDriver>();
+    }
+
     if (name == "PipeWire") {
 #ifdef MUSE_MODULE_AUDIO_PIPEWIRE
         auto driver = std::make_shared<PwAudioDriver>();
         if (driver->connectedToPwServer()) {
             return driver;
         } else {
-            LOGE() << "PipeWire driver failed connected to server";
+            LOGE() << "PipeWire driver failed to connect to server";
         }
 #else
-        LOGW() << "PipeWire is required but is not available, ALSA will be used";
+        LOGW() << "PipeWire is required but is not available";
 #endif
+
+        return nullptr;
     }
 
-    // required ALSA or fallback
-    return std::make_shared<AlsaAudioDriver>();
+#if defined(MUSE_MODULE_AUDIO_JACK) && defined(Q_OS_LINUX)
+    if (name == "JACK") {
+        return std::make_shared<JackAudioDriver>();
+    }
+#endif
+
+    LOGE() << "Unknown or unavailable audio driver: " << name;
+    return nullptr;
 #endif
 
 #ifdef Q_OS_MACOS
@@ -151,4 +117,49 @@ IAudioDriverPtr AudioDriverFactory::createDriver(const std::string& name) const
     UNUSED(name);
     return std::shared_ptr<IAudioDriver>(new WebAudioDriver());
 #endif
+
+    return nullptr;
+}
+
+std::vector<std::string> AudioDriverFactory::availableAudioDrivers() const
+{
+    std::vector<std::string> names;
+#ifdef Q_OS_WIN
+    names.push_back("WASAPI");
+#ifdef MUSE_MODULE_AUDIO_ASIO
+    names.push_back("ASIO");
+#endif
+
+    return names;
+#endif // Q_OS_WIN
+
+#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
+    names.push_back("ALSA");
+    if (qEnvironmentVariableIsSet("MUSESCORE_FORCE_ALSA")) {
+        return names;
+    }
+
+#ifdef MUSE_MODULE_AUDIO_PIPEWIRE
+    names.push_back("PipeWire");
+#endif
+
+#if defined(MUSE_MODULE_AUDIO_JACK) && defined(Q_OS_LINUX)
+    names.push_back("JACK");
+#endif
+
+    return names;
+#endif // Q_OS_LINUX
+
+#ifdef Q_OS_MACOS
+    names.push_back("CoreAudio");
+    return names;
+#endif
+
+#ifdef Q_OS_WASM
+    names.push_back("WASM");
+    return names;
+#endif
+
+
+    return names;
 }

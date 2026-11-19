@@ -73,6 +73,7 @@ Item {
 
             width: 30
             height: width
+            enabled: Boolean(item) && item.enabled
 
             icon: Boolean(item) ? item.icon : IconCode.NONE
 

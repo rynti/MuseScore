@@ -34,6 +34,10 @@ using namespace muse::actions;
 
 static const ActionCode PLAY_FROM_SELECTION_CODE("play-from-selection");
 static const ActionCode CLEAR_ONLINE_SOUNDS_CACHE_CODE("clear-online-sounds-cache");
+static const ActionCode PLAYBACK_UI_LOOP_CODE("loop");
+static const ActionCode PLAYBACK_UI_LOOP_IN_CODE("loop-in");
+static const ActionCode PLAYBACK_UI_LOOP_OUT_CODE("loop-out");
+static const ActionCode PLAYBACK_UI_COUNT_IN_CODE("countin");
 
 const UiActionList PlaybackUiActions::s_mainActions = {
     UiAction("play",
@@ -252,6 +256,11 @@ void PlaybackUiActions::init()
     m_controller->onlineSoundsChanged().onNotify(this, [this]() {
         m_actionEnabledChanged.send({ CLEAR_ONLINE_SOUNDS_CACHE_CODE });
     });
+
+    audioDriverController()->transportSyncStateChanged().onNotify(this, [this]() {
+        m_actionEnabledChanged.send({ PLAYBACK_UI_LOOP_CODE, PLAYBACK_UI_LOOP_IN_CODE,
+                                      PLAYBACK_UI_LOOP_OUT_CODE, PLAYBACK_UI_COUNT_IN_CODE });
+    });
 }
 
 const UiActionList& PlaybackUiActions::actionsList() const
@@ -276,6 +285,12 @@ bool PlaybackUiActions::actionEnabled(const UiAction& act) const
     }
 
     if (!m_controller->canReceiveAction(act.code)) {
+        return false;
+    }
+
+    if (audioDriverController()->transportSyncState() == muse::audio::AudioDriverTransportSyncState::Effective
+        && (act.code == PLAYBACK_UI_LOOP_CODE || act.code == PLAYBACK_UI_LOOP_IN_CODE
+            || act.code == PLAYBACK_UI_LOOP_OUT_CODE || act.code == PLAYBACK_UI_COUNT_IN_CODE)) {
         return false;
     }
 

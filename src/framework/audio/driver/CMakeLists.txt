@@ -71,15 +71,15 @@ elseif(OS_IS_LIN OR OS_IS_FBSD)
         endif()
     endif()
 
-    if (MUSE_MODULE_AUDIO_JACK)
+    if (OS_IS_LIN AND MUSE_MODULE_AUDIO_JACK)
         target_sources(muse_audio_driver PRIVATE
             platform/jack/jackaudiodriver.cpp
             platform/jack/jackaudiodriver.h
+            platform/jack/jacktransportepisodetracker.h
         )
 
         find_package(Jack REQUIRED)
-        target_include_directories(muse_audio_driver PRIVATE ${JACK_INCLUDE_DIRS})
-        target_link_libraries(muse_audio_driver PRIVATE ${JACK_LIBRARIES} pthread)
+        target_link_libraries(muse_audio_driver PRIVATE Jack::Jack)
     endif()
 elseif(OS_IS_MAC)
     target_sources(muse_audio_driver PRIVATE

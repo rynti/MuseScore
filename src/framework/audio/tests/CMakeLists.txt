@@ -27,7 +27,11 @@ set(MODULE_TEST_SRC
     ${CMAKE_CURRENT_LIST_DIR}/mocks/rpcchannelmock.h
 
     ${CMAKE_CURRENT_LIST_DIR}/alignbuffer_tests.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/jacktransportepisodetracker_tests.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/sampletimeconverter_tests.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/sequenceplayer_preparation_tests.cpp
     ${CMAKE_CURRENT_LIST_DIR}/audiodrivercontroller_tests.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/audiodriverfactory_tests.cpp
 )
 
 set(MODULE_TEST_LINK
@@ -37,3 +41,16 @@ set(MODULE_TEST_LINK
 include(SetupGTest)
 
 add_subdirectory(rpcpacker)
+
+if (OS_IS_LIN AND MUSE_MODULE_AUDIO_JACK)
+    set(MODULE_TEST muse_audio_jack_tests)
+    set(MODULE_TEST_SRC
+        ${CMAKE_CURRENT_LIST_DIR}/jackaudiodriver_callback_tests.cpp
+    )
+    set(MODULE_TEST_INCLUDE
+        ${CMAKE_CURRENT_LIST_DIR}/..
+    )
+    set(MODULE_TEST_LINK muse_audio_driver)
+
+    include(SetupGTest)
+endif()

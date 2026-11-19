@@ -33,7 +33,7 @@ public:
     std::vector<std::string> availableAudioApiList() const override;
 
     std::string currentAudioApi() const override;
-    void changeCurrentAudioApi(const std::string& name)  override;
+    bool changeCurrentAudioApi(const std::string& name)  override;
     async::Notification currentAudioApiChanged() const override;
 
     // Current driver operation
