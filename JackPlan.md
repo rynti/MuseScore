@@ -1,10 +1,9 @@
 # Focused Linux JACK Integration Plan
 
-> **Status:** `jack-4.7f` integrates the exact official `v4.7.6` release
-> (`96480d58445e3b24b230a3fe7d4725d639aa2eb3`) with the existing `jack-4.7e`
-> implementation. This is a development update; native JACK2 with Ardour remains
-> the mandatory release gate described in section 5.2. See section 5.5 for the
-> integration changes, local validation, and remaining manual checks.
+> **Status:** `jack-4.7g` merges the official `v4.7.7` release
+> (`b750c43e316cf6a00e70451870b231b12f400bda`) into `jack-4.7f`. Section 5.6
+> records the local build, test, and PipeWire-JACK results. Native JACK2 with
+> Ardour remains the release gate described in section 5.2.
 >
 > **Goal in one sentence:** make current MuseScore Studio genuinely useful as a
 > Linux JACK client, with stereo audio and bidirectional JACK transport control
@@ -1121,7 +1120,32 @@ this is a build/test-validated development integration, not a qualified release.
 The section 5.2 native gate and earlier unchecked completion items remain in
 force.
 
-### 5.6 Completion checklist
+### 5.6 Verified local `jack-4.7g` evidence
+
+Merge `224cf97039` combines `jack-4.7f` (`821f7b45b7`) and official `v4.7.7`
+(`b750c43e316cf6a00e70451870b231b12f400bda`). The JACK integration diff against
+the upstream tag is byte-for-byte identical to the `jack-4.7f` diff against
+`v4.7.6`.
+
+On 2026-11-19, fresh Linux Debug builds in `build-jack-4.7g` and
+`build-nojack-4.7g` both built and installed `MuseScoreStudio`. Both installed
+binaries reported `MuseScore4Development 4.7.7`, opened a temporary piano score,
+and saved valid `.mscz` archives. `readelf` showed `libjack.so.0` only in the
+JACK-enabled build. Both configurations passed 40 shared audio and 26 RPC-packer
+tests. The JACK-enabled build also passed 17 JACK callback and 12 notation input
+tests. The builds used GCC 16.2.1, Qt 6.12.0, system HarfBuzz and MNXDOM, and the
+local Qt configuration hook described in section 5.5.
+
+Two runs with isolated settings and a private PipeWire-JACK 3.1611.0 server
+at 48 kHz and 1,024 frames captured nonzero audio from both expected ports
+with Worker RPC and transport sync enabled. External start, rolling locate
+to four seconds, and stop worked. MuseScore's Rewind returned the shared
+transport to frame zero, Play started it and produced stereo audio, and Stop
+stopped and reset it. Sync-disabled local playback remains unverified in this
+smoke test because the headless shortcut handler did not dispatch Play. Native
+JACK2/Ardour qualification and recording alignment measurements remain pending.
+
+### 5.7 Completion checklist
 
 Checked items below have direct build, automated-test, code-audit, or recorded
 PipeWire-JACK/Ardour evidence. Unchecked items remain external manual/CI
